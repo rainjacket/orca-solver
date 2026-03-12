@@ -1,0 +1,17 @@
+[package]
+name = "orca-cli"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "orca"
+path = "src/main.rs"
+
+[dependencies]
+orca-core.workspace = true
+orca-solver.workspace = true
+anyhow.workspace = true
+clap.workspace = true

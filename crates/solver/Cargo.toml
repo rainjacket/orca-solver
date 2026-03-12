@@ -1,0 +1,12 @@
+[package]
+name = "orca-solver"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+orca-core.workspace = true
+anyhow.workspace = true
+rayon.workspace = true

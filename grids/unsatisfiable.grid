@@ -1,0 +1,6 @@
+# Grid that should be unsatisfiable with a small dictionary
+# Pre-fill conflicting letters
+3 3
+ZZ.
+...
+...

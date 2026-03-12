@@ -1,0 +1,17 @@
+[package]
+name = "orca-core"
+edition.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+
+[dev-dependencies]
+criterion.workspace = true
+
+[[bench]]
+name = "bitset_bench"
+harness = false

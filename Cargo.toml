@@ -1,0 +1,34 @@
+[workspace]
+members = ["crates/core", "crates/solver", "cli"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT"
+repository = "https://github.com/rainjacket/orca-solver"
+description = "High-performance crossword grid filler"
+
+[workspace.dependencies]
+orca-core = { path = "crates/core" }
+orca-solver = { path = "crates/solver" }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+criterion = { version = "0.5", features = ["html_reports"] }
+rayon = "1"
+
+[workspace.lints.clippy]
+type_complexity = "allow"
+needless_range_loop = "allow"
+large_enum_variant = "allow"
+too_many_arguments = "allow"
+manual_is_multiple_of = "allow"
+collapsible_else_if = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.bench]
+lto = "thin"
+codegen-units = 1

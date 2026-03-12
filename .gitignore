@@ -1,0 +1,6 @@
+/target
+dictionaries/*.dict
+!dictionaries/test_small.dict
+*.swp
+*.swo
+.DS_Store
