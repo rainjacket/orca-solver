@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <!-- Black background acts as gridlines -->
+  <rect width="32" height="32" fill="#000000"/>
+  <!-- 3x3 grid: cell 9px, gap 1.5px, total 30px, offset 1px -->
+  <!-- Row 0: B W P -->
+  <rect x="1" y="1" width="9" height="9" fill="#000000"/>
+  <rect x="11.5" y="1" width="9" height="9" fill="#ffffff"/>
+  <rect x="22" y="1" width="9" height="9" fill="#8957e5"/>
+  <!-- Row 1: W W W -->
+  <rect x="1" y="11.5" width="9" height="9" fill="#ffffff"/>
+  <rect x="11.5" y="11.5" width="9" height="9" fill="#ffffff"/>
+  <rect x="22" y="11.5" width="9" height="9" fill="#ffffff"/>
+  <!-- Row 2: P W B -->
+  <rect x="1" y="22" width="9" height="9" fill="#8957e5"/>
+  <rect x="11.5" y="22" width="9" height="9" fill="#ffffff"/>
+  <rect x="22" y="22" width="9" height="9" fill="#000000"/>
+</svg>

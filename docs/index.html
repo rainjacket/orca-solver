@@ -1,0 +1,3012 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta property="og:title" content="How Orca Works: A High-Performance Crossword Filler">
+    <meta property="og:description" content="A deep dive into Orca's constraint-propagation crossword filler.">
+    <meta property="og:image" content="https://storage.googleapis.com/orca-how-it-works/screenshot-5.png">
+    <meta property="og:url" content="https://storage.googleapis.com/orca-how-it-works/how-orca-works.html">
+    <meta property="og:type" content="article">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <title>How Orca Works: A High-Performance Crossword Filler</title>
+    <style>
+        /* ── Variables ── */
+        :root {
+            /* Core palette */
+            --text: #1a1a2e;
+            --bg: #ffffff;
+            --blue-dark: #0f4c75;
+            --blue-light: #e8f1f8;
+            --code-bg: #f6f8fa;
+            --border: #d0d7de;
+            --caption: #636c76;
+            --sans: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+
+            /* Neutral grays (dark to light) */
+            --black: #222;
+            --dark-gray: #444;
+            --mid-gray: #999;
+            --silver: #bbb;
+            --light-gray: #ccc;
+            --rule-gray: #eee;
+            --muted-bg: #e8e8e8;
+            --subtle-bg: #f0f0f0;
+
+            /* Greens */
+            --green-dark: #2e7d32;
+            --green: #4caf50;
+            --green-light: #ddf5dd;
+
+            /* Oranges and reds */
+            --orange-dark: #c55a11;
+            --red: #ff5722;
+            --red-dark: #d4380d;
+            --red-light: #fce4d6;
+            --salmon: #e8a598;
+
+            /* Warm tones */
+            --brown: #6b4423;
+            --tan: #f5ece0;
+            --rust: #c87137;
+            --gold: #b8860b;
+            --gold-bg: #fff3cd;
+
+            /* Transparency */
+            --blue-underline: rgba(15, 76, 117, 0.3);
+            --caption-underline: rgba(99, 108, 118, 0.4);
+            --orange-underline: rgba(197, 90, 17, 0.3);
+            --shadow-sm: rgba(0, 0, 0, 0.15);
+        }
+
+        /* ── Reset & base ── */
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Georgia', 'Charter', 'Bitstream Charter', serif;
+            color: var(--text);
+            background: var(--bg);
+            line-height: 1.75;
+            font-size: 17px;
+        }
+
+        svg { font-family: var(--sans); display: block; margin: 0 auto; }
+        svg rect[onmouseenter] { cursor: pointer; }
+
+        /* ── Layout ── */
+        article {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 60px 24px 120px;
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 48px 0;
+        }
+
+        /* ── Typography ── */
+        h1 {
+            font-size: 2.4em;
+            line-height: 1.15;
+            margin-bottom: 12px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        h2 {
+            font-family: var(--sans);
+            font-size: 1.55em;
+            margin-top: 40px;
+            margin-bottom: 16px;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+        }
+
+        h3 {
+            font-family: var(--sans);
+            font-size: 1.2em;
+            margin-top: 28px;
+            margin-bottom: 12px;
+            font-weight: 600;
+        }
+
+        p { margin-bottom: 20px; }
+
+        .subtitle {
+            font-size: 1.25em;
+            color: var(--caption);
+            margin-bottom: 8px;
+            line-height: 1.5;
+        }
+
+        .byline {
+            font-family: var(--sans);
+            font-size: 0.9em;
+            color: var(--caption);
+            margin-bottom: 32px;
+        }
+
+        .lede {
+            font-size: 1.15em;
+            line-height: 1.7;
+            color: var(--text);
+        }
+
+        a {
+            color: var(--blue-dark);
+            text-decoration: underline;
+            text-decoration-color: var(--blue-underline);
+            text-underline-offset: 2px;
+        }
+
+        a:hover { text-decoration-color: var(--blue-dark); }
+
+        code {
+            font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Consolas', monospace;
+            font-size: 0.85em;
+        }
+
+        :not(pre) > code {
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        pre {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 20px 24px;
+            overflow-x: auto;
+            margin: 20px 0 28px;
+            line-height: 1.5;
+        }
+
+        pre code {
+            font-size: 0.85em;
+        }
+
+        .caption {
+            font-size: 0.85em;
+            color: var(--caption);
+            margin-top: 10px;
+            font-style: italic;
+        }
+
+        .caption-center { text-align: center; }
+
+        .acronym-letter {
+            color: var(--blue-dark);
+            font-weight: 700;
+        }
+
+        .acronym-hero {
+            display: block;
+            max-width: 420px;
+            margin: 36px auto 0;
+        }
+
+        .substring-match { color: var(--red-dark); }
+
+        .formula {
+            text-align: center;
+            font-family: 'Times New Roman', 'Latin Modern Math', Georgia, serif;
+            font-style: italic;
+            font-size: 1.25em;
+            margin: -8px 0 20px;
+            letter-spacing: 0.02em;
+        }
+        .formula .fn {
+            font-style: normal;
+            font-variant: normal;
+        }
+        .formula sub, .formula sup {
+            font-size: 0.7em;
+        }
+        .formula-sigma {
+            display: inline-flex;
+            flex-direction: column;
+            align-items: center;
+            vertical-align: middle;
+            line-height: 1.1;
+            transform: translateY(6px);
+        }
+        .formula-sigma .sigma {
+            font-size: 1.5em;
+            font-style: normal;
+        }
+        .formula-sigma .fn {
+            font-size: 0.65em;
+        }
+
+        /* ── Lists ── */
+        ol, ul {
+            margin-bottom: 20px;
+            padding-left: 28px;
+        }
+
+        li { margin-bottom: 8px; }
+        article > ul, article > ol ul {
+            list-style: none;
+            padding-left: 1.2em;
+        }
+        article > ul > li::before, article > ol ul > li::before {
+            content: '';
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background: var(--blue-dark);
+            border-radius: 50%;
+            margin-right: 8px;
+            margin-left: -1.2em;
+            vertical-align: 1px;
+        }
+
+        /* ── Callout ── */
+        .callout {
+            background: var(--blue-light);
+            border-left: 4px solid var(--blue-dark);
+            padding: 16px 20px;
+            margin: 24px 0;
+            border-radius: 0 8px 8px 0;
+        }
+
+        .callout p:last-child { margin-bottom: 0; }
+
+        /* ── Table of contents ── */
+        .toc {
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 24px 28px;
+            margin: 32px 0 48px;
+        }
+
+        .toc h3 {
+            font-size: 1em;
+            margin-top: 0;
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--caption);
+        }
+
+        .toc ol { margin-bottom: 0; padding-left: 20px; }
+
+        .toc li {
+            margin-bottom: 4px;
+            font-family: var(--sans);
+            font-size: 0.9em;
+        }
+
+        .toc a { text-decoration: none; }
+        .toc a:hover { text-decoration: underline; }
+
+        /* ── Data tables ── */
+        table.data {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0 0;
+            font-size: 0.9em;
+            border: 1px solid var(--border);
+        }
+
+        table.data th, table.data td {
+            padding: 10px 14px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        table.data th {
+            font-family: var(--sans);
+            font-weight: 600;
+            background: var(--code-bg);
+        }
+
+        table.data tr:last-child td { border-bottom: none; }
+        table.data caption {
+            font-family: var(--sans);
+            font-size: 0.95em;
+            font-weight: 600;
+            text-align: left;
+            padding: 0 0 6px;
+            color: var(--text);
+        }
+        .highlight-row { background: var(--green-light); }
+        .bench-note {
+            font-size: 0.85em;
+            color: var(--caption);
+            font-style: italic;
+            margin-top: 8px;
+        }
+
+        /* ── Grid figures ── */
+        .grid-figure {
+            margin: 0 0 28px;
+            text-align: center;
+        }
+        .grid-pair {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            flex-wrap: wrap;
+        }
+
+        .grid-figure table {
+            margin: 0 auto;
+            border-collapse: collapse;
+        }
+
+        .grid-figure td {
+            width: 26px;
+            height: 26px;
+            text-align: center;
+            vertical-align: middle;
+            font-family: var(--sans);
+            font-size: 11px;
+            font-weight: 600;
+            border: 1px solid var(--mid-gray);
+        }
+
+        .grid-figure .black { background: var(--black); }
+        .grid-figure .fill { background: var(--bg); color: var(--silver); }
+        .grid-figure .letter { background: var(--tan); color: var(--brown); }
+        .grid-figure .wild { background: var(--subtle-bg); color: var(--light-gray); }
+        .grid-figure .check-only { background: var(--subtle-bg); color: var(--dark-gray); }
+        .grid-figure .check-only.tsep { border-top: 2px solid var(--rust); }
+        .grid-figure .check-only.bsep { border-bottom: 2px solid var(--rust); }
+        .grid-figure .check-only.lsep { border-left: 2px solid var(--rust); }
+        .grid-figure .check-only.rsep { border-right: 2px solid var(--rust); }
+        .grid-figure .scan-window { background: var(--green-light); color: var(--text); }
+        .grid-figure .highlight-curated { background: var(--green-light); }
+        .grid-figure .highlight-random { background: var(--orange-underline); }
+        .grid-figure .branch-cell { background: var(--red); color: var(--bg); }
+        .grid-figure .propagated { background: var(--green); color: var(--bg); }
+        .grid-figure .prefilled { background: var(--tan); color: var(--brown); }
+        .grid-figure table .letter {
+            transition: color 0.5s ease, background 0.5s ease;
+        }
+        .legend-swatch {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+            vertical-align: middle;
+        }
+        #random-grid { transition: opacity 0.1s ease; }
+        .scan-grid-wrap {
+            display: flex;
+            justify-content: center;
+            margin: 24px 0;
+        }
+        #crossing-scan-grid { margin: 0; }
+        #crossing-scan-grid table { font-size: 11px; }
+        #crossing-scan-grid td[data-score] {
+            transition: color 0.5s ease, background 0.5s ease;
+        }
+
+        /* ── Grid toggle ── */
+        .grid-toggle-wrap { text-align: center; margin-bottom: 6px; }
+        .grid-toggle-btn {
+            display: inline-block;
+            padding: 3px 12px;
+            font-family: var(--sans);
+            font-size: 12px;
+            color: var(--caption);
+            background: var(--code-bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .grid-toggle-btn:hover { background: var(--blue-light); }
+        .corner {
+            color: var(--dark-gray) !important;
+            background: var(--subtle-bg) !important;
+        }
+        .grid-corners-hidden .corner {
+            color: var(--light-gray) !important;
+        }
+
+        /* ── Symmetry cells ── */
+        .sym-cell {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 26px;
+            height: 26px;
+            font-family: var(--sans);
+            font-style: normal;
+            font-size: 11px;
+            font-weight: 600;
+            background: var(--tan);
+            color: var(--brown);
+            border: 1px solid var(--mid-gray);
+            vertical-align: middle;
+            outline-offset: -3px;
+        }
+        .sym-cell-a, .sym-cell-b { z-index: 1; position: relative; }
+        .sym-cell-a { outline: 3px solid var(--red); }
+        .sym-cell-b { outline: 3px solid var(--green); }
+        .color-label-letter { font-weight: bold; color: var(--brown); }
+        .color-label-check { font-weight: bold; color: var(--dark-gray); }
+
+        /* ── Fill animation ── */
+        .anim-wrap {
+            margin: 24px 0;
+            text-align: center;
+        }
+        .fill-anim table { font-size: 10px; }
+        .fill-anim td { position: relative; }
+        .fill-anim td.anim-cell { opacity: 0; }
+        .fill-anim td.prefilled-anim { opacity: 1; }
+        .fill-anim.playing td.anim-cell { animation: cell-appear 0.3s ease-out forwards; }
+        @keyframes cell-appear {
+            0% { opacity: 0; transform: scale(0.5); }
+            60% { opacity: 1; transform: scale(1.1); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        .fill-anim .branch-marker {
+            position: relative;
+        }
+        .fill-anim .branch-marker::after {
+            content: '';
+            position: absolute;
+            top: 1px; right: 1px;
+            width: 6px; height: 6px;
+            background: var(--red);
+            border-radius: 50%;
+        }
+        .anim-controls {
+            text-align: center;
+            margin: 8px 0 4px;
+        }
+
+        /* ── Screenshot gallery ── */
+        .screenshot-gallery { margin: 20px 0; }
+        .screenshot-main {
+            background: #0d1117;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 10px;
+            text-align: center;
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .screenshot-main img {
+            height: 444px;
+            width: auto;
+            max-width: 100%;
+            display: block;
+            margin: 0 auto;
+        }
+        @media (max-width: 600px) {
+            .screenshot-main img {
+                height: auto;
+                width: 100%;
+            }
+        }
+        .screenshot-tabs {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+        .screenshot-tabs .tab {
+            padding: 6px 14px;
+            font-size: 0.85em;
+            font-family: var(--sans);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg);
+            color: var(--caption);
+            cursor: pointer;
+        }
+        .screenshot-tabs .tab:hover {
+            background: var(--blue-light);
+        }
+        .screenshot-tabs .tab.active {
+            background: var(--blue-dark);
+            color: var(--bg);
+            border-color: var(--blue-dark);
+        }
+        .screenshot-gallery .caption { text-align: center; }
+        .cc-screenshots {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+        }
+        .cc-screenshots img {
+            width: 340px;
+            min-width: 0;
+            flex: 1 1 0;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+        }
+        .banner {
+            display: block;
+            margin: 0 auto;
+            max-width: 100%;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+        }
+
+        /* ── Tooltips ── */
+        .tooltip-wrap { position: relative; }
+        .tooltip-box {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            padding: 4px 8px;
+            box-shadow: 0 2px 8px var(--shadow-sm);
+            font-family: var(--sans);
+            font-size: 12px;
+            color: var(--text);
+            z-index: 100;
+            pointer-events: none;
+        }
+        .bench-tooltip {
+            display: none;
+            position: absolute;
+        }
+        .bench-tooltip.visible { display: block; }
+        .bench-tooltip ul {
+            margin: 2px 0;
+            padding-left: 14px;
+            list-style-type: disc;
+        }
+        .bench-tooltip li {
+            margin: 0;
+            padding: 0;
+            line-height: 1.3;
+        }
+        .has-tip {
+            position: relative;
+            cursor: pointer;
+            text-decoration: underline;
+            text-decoration-color: var(--caption-underline);
+            text-underline-offset: 2px;
+        }
+        .has-tip .tip {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            white-space: nowrap;
+            font-size: 12px;
+            font-style: normal;
+            font-weight: normal;
+        }
+        .has-tip:hover .tip { display: block; }
+        /* Touch devices: disable hover, use tap toggle, constrain to viewport */
+        @media (hover: none) {
+            .has-tip:hover .tip { display: none; }
+            .has-tip.active .tip {
+                display: block;
+                position: fixed;
+                top: 50%;
+                left: 12px;
+                right: 12px;
+                bottom: auto;
+                transform: translateY(-50%);
+                white-space: normal;
+                text-align: center;
+            }
+        }
+        .grid-trigger {
+            cursor: pointer;
+            text-decoration: underline;
+            text-decoration-color: var(--caption-underline);
+            text-underline-offset: 2px;
+        }
+
+        /* ── Benchmark charts ── */
+        .bench-chart-wrap {
+            margin: 20px 0 0;
+            position: relative;
+            max-width: 550px;
+        }
+        .bench-section { margin-top: 16px; }
+        .bench-section:first-child { margin-top: 0; }
+        .bench-title {
+            font-family: var(--sans);
+            font-size: 14px;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: 4px;
+        }
+
+        /* ── Closing ── */
+        .closing-wave {
+            display: block;
+            max-width: 300px;
+            margin: 32px auto 12px;
+        }
+        .closing-text {
+            text-align: center;
+            font-style: italic;
+            color: var(--caption);
+            margin: 0;
+        }
+
+        /* ── Mini crossword ── */
+        .mini-xword {
+            display: flex;
+            gap: 28px;
+            margin: 28px 0;
+            align-items: flex-start;
+        }
+        .xword-grid table {
+            border-collapse: collapse;
+            border: 2px solid var(--text);
+        }
+        .xword-cell {
+            position: relative;
+            width: 44px;
+            height: 44px;
+            border: 1px solid var(--border);
+            padding: 0;
+        }
+        .xword-cell input {
+            width: 100%;
+            height: 100%;
+            border: none;
+            background: transparent;
+            text-align: center;
+            font-size: 22px;
+            font-family: var(--sans);
+            font-weight: 600;
+            text-transform: uppercase;
+            color: var(--text);
+            caret-color: transparent;
+            outline: none;
+            padding: 6px 0 0;
+        }
+        .xword-num {
+            position: absolute;
+            top: 1px;
+            left: 3px;
+            font-size: 10px;
+            font-family: var(--sans);
+            color: var(--caption);
+            pointer-events: none;
+            line-height: 1;
+        }
+        .xword-cell.highlight { background: var(--blue-light); }
+        .xword-cell.focus { background: #c8ddf0; }
+        .xword-clues {
+            display: flex;
+            gap: 20px;
+            font-size: 15px;
+            line-height: 1.5;
+        }
+        .xword-clue-group h4 {
+            font-family: var(--sans);
+            font-size: 14px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .xword-clue {
+            cursor: pointer;
+            padding: 1px 4px;
+            border-radius: 3px;
+        }
+        .xword-clue:hover { background: var(--rule-gray); }
+        .xword-clue.active { background: var(--blue-light); }
+        .mini-xword.solved .xword-grid table { border-color: var(--green-dark); }
+        .mini-xword.solved .xword-cell { background: var(--green-light); }
+        .mini-xword.solved .xword-cell.highlight,
+        .mini-xword.solved .xword-cell.focus { background: var(--green-light); }
+
+        /* ── Responsive ── */
+        article svg { max-width: 100%; height: auto; }
+        @media (max-width: 600px) {
+            h1 { font-size: 1.8em; }
+            article { padding: 32px 16px 80px; }
+        }
+        @media (max-width: 500px) {
+            .mini-xword { flex-direction: column; align-items: center; }
+        }
+    </style>
+    <script>
+    /* ── Tooltip utilities ── */
+
+    var lastEventWasTouch = false;
+    document.addEventListener('touchstart', function() { lastEventWasTouch = true; }, {passive: true});
+
+    function showTooltip(event, id, anchor) {
+        var tip = document.getElementById(id);
+        var wrapRect = event.target.closest('div').getBoundingClientRect();
+        var trigRect = event.target.getBoundingClientRect();
+        if (anchor === 'right') {
+            tip.style.left = (trigRect.left - wrapRect.left + 8) + 'px';
+            tip.style.top = (trigRect.top + trigRect.height/2 - wrapRect.top - 14) + 'px';
+        } else if (anchor === 'above') {
+            tip.style.left = (trigRect.left + trigRect.width/2 - wrapRect.left - tip.offsetWidth/2) + 'px';
+            tip.style.top = (trigRect.top - wrapRect.top - tip.offsetHeight - 6) + 'px';
+        } else {
+            tip.style.left = (trigRect.left + trigRect.width/2 - wrapRect.left - tip.offsetWidth/2) + 'px';
+            tip.style.top = (trigRect.bottom - wrapRect.top + 8) + 'px';
+        }
+        tip.classList.add('visible');
+    }
+
+    function hideTooltip(id) {
+        if (lastEventWasTouch) return;
+        document.getElementById(id).classList.remove('visible');
+    }
+
+    /* ── Touch device support ── */
+    document.querySelectorAll('[onmouseenter]').forEach(function(el) {
+        el.addEventListener('click', function(e) { e.stopPropagation(); });
+    });
+    document.addEventListener('click', function(e) {
+        var tip = e.target.closest('.has-tip');
+        var isTrigger = e.target.closest('[onmouseenter]') || e.target.closest('circle');
+        if (tip) {
+            document.querySelectorAll('.has-tip.active').forEach(function(t) {
+                if (t !== tip) t.classList.remove('active');
+            });
+            tip.classList.toggle('active');
+        } else if (isTrigger && lastEventWasTouch) {
+            /* Touch tap on tooltip trigger — mouseenter already showed it, don't dismiss */
+        } else {
+            document.querySelectorAll('.has-tip.active').forEach(function(t) {
+                t.classList.remove('active');
+            });
+            document.querySelectorAll('.bench-tooltip.visible').forEach(function(t) {
+                t.classList.remove('visible');
+            });
+        }
+    });
+
+    /* ── Tooltip data ── */
+
+    var swTipInfo = {
+        'orca': '<strong>Orca 0.1.0</strong>',
+        'cc': '<strong>Crossword Compiler 11.37</strong><ul><li>Optimization: None</li><li>Exhaustive recursion: Yes</li><li>Max words in one go: 1024</li><li>Words/buffer size ratio: 35</li><li>Power efficiency mode: Never</li></ul>'
+    };
+
+    function showSwTip(event, key) {
+        document.getElementById('swTip').innerHTML = swTipInfo[key] || '';
+        showTooltip(event, 'swTip', 'right');
+    }
+
+    var dictSamples = {
+        3: 'ORB\nORC\nORD\nORE\nORG',
+        4: 'ORBE\nORBS\nORCA\nORCH\nORCS',
+        5: 'ORBAD\nORBAN\nORBED\nORBIT\nORCAS',
+        6: 'ORBACH\nORBING\nORBITS\nORBITZ\nORBUST',
+        7: 'ORBISON\nORBITAL\nORBITED\nORBITER\nORBITTY',
+        8: 'ORBITALS\nORBITERS\nORBITGUM\nORBITING\nORCAPODS',
+        9: 'ORBITHIGH\nORBWEAVER\nORCAINLET\nORCAWHALE\nORCHESTRA',
+        10: 'ORBWEAVERS\nORCHARDIST\nORCHARDMAN\nORCHESTRAL\nORCHESTRAS',
+        11: 'ORCATRAINER\nORCHESTRATE\nORDERAROUND\nORDERDRINKS\nORDEREDPAIR',
+        12: 'ORBITALPOINT\nORBITTHEMOON\nORCATRAINERS\nORCHARDGRASS\nORCHESTIIDAE',
+        13: 'ORBANDSCEPTER\nORBITALCAVITY\nORBITALDEBRIS\nORBITALMOTION\nORCHESTRAHALL',
+        14: 'ORBIGNYACOHUNE\nORCHESTRAHALLS\nORCHESTRALWORK\nORCHESTRAMUSIC\nORCHESTRATIONS',
+        15: 'ORBITALROTATION\nORBITALVELOCITY\nORBITHIGHSCHOOL\nORCHESTRALBELLS\nORCHESTRALEADER'
+    };
+
+    function showDictTip(event, len) {
+        var tip = document.getElementById('dictTip');
+        tip.textContent = '';
+        dictSamples[len].split('\n').forEach(function(w, i) {
+            if (i > 0) tip.appendChild(document.createElement('br'));
+            tip.appendChild(document.createTextNode(w));
+        });
+        showTooltip(event, 'dictTip', 'above');
+    }
+
+    /* ── Grid rendering ── */
+
+    // Render a crossword grid as an HTML table.
+    // gridStr: '#'=black, '*'=wild, '.'=fill, A-Z=letter
+    // highlights (optional): 'g'=highlight-curated, 'r'=highlight-random, '.'=none
+    function renderGridTable(el, gridStr, highlights) {
+        var lines = gridStr.trim().split('\n');
+        var hl = highlights ? highlights.trim().split('\n') : null;
+        var html = '';
+        for (var r = 0; r < lines.length; r++) {
+            html += '<tr>';
+            for (var c = 0; c < lines[r].length; c++) {
+                var ch = lines[r][c], cls, text;
+                if (ch === '#') { cls = 'black'; text = ''; }
+                else if (ch === '*') { cls = 'wild'; text = '*'; }
+                else if (ch === '.') { cls = 'fill'; text = ''; }
+                else { cls = 'letter'; text = ch; }
+                if (hl && hl[r][c] === 'g') cls += ' highlight-curated';
+                if (hl && hl[r][c] === 'r') cls += ' highlight-random';
+                html += '<td class="' + cls + '">' + text + '</td>';
+            }
+            html += '</tr>';
+        }
+        (typeof el === 'string' ? document.getElementById(el) : el).innerHTML = html;
+    }
+
+    // Render a crossword grid as an inline SVG.
+    function renderGridSvg(id, gridStr, cellSize) {
+        var lines = gridStr.trim().split('\n');
+        var rows = lines.length, cols = lines[0].length;
+        var w = cols * cellSize, h = rows * cellSize;
+        var s = '<svg width="'+w+'" height="'+h+'" xmlns="http://www.w3.org/2000/svg">';
+        for (var r = 0; r < rows; r++) {
+            for (var c = 0; c < cols; c++) {
+                var ch = lines[r][c];
+                var fill, letter = '';
+                if (ch === '#') fill = 'var(--black)';
+                else if (ch === '*') fill = 'var(--subtle-bg)';
+                else if (ch === '.') fill = 'var(--bg)';
+                else { fill = 'var(--tan)'; letter = ch; }
+                s += '<rect x="'+(c*cellSize)+'" y="'+(r*cellSize)+'" width="'+cellSize+'" height="'+cellSize+'" fill="'+fill+'" stroke="var(--silver)" stroke-width="0.5"/>';
+                if (letter) s += '<text x="'+(c*cellSize+cellSize/2)+'" y="'+(r*cellSize+cellSize*0.72)+'" text-anchor="middle" font-size="'+(cellSize*0.55)+'" font-weight="600" fill="var(--brown)">'+letter+'</text>';
+            }
+        }
+        s += '</svg>';
+        document.getElementById(id).innerHTML = s;
+    }
+
+    // Render check-only grid. checkMask: '.'=normal, hex digit=check-only cell with
+    // border flags (t=1, r=2, b=4, l=8). Borders mark tendril boundaries.
+    function renderCheckOnlyGrid(el, gridStr, checkMask) {
+        var lines = gridStr.trim().split('\n');
+        var mask = checkMask.trim().split('\n');
+        var sepNames = ['tsep', 'rsep', 'bsep', 'lsep'];
+        var html = '';
+        for (var r = 0; r < lines.length; r++) {
+            html += '<tr>';
+            for (var c = 0; c < lines[r].length; c++) {
+                var ch = lines[r][c];
+                var m = mask[r][c];
+                if (ch === '#') { html += '<td class="black"></td>'; }
+                else if (ch === '*') { html += '<td class="wild">*</td>'; }
+                else if (m !== '.') {
+                    var cls = 'check-only';
+                    var bits = parseInt(m, 16);
+                    for (var i = 0; i < 4; i++) if (bits & (1 << i)) cls += ' ' + sepNames[i];
+                    html += '<td class="' + cls + '">' + ch + '</td>';
+                }
+                else { html += '<td class="letter">' + ch + '</td>'; }
+            }
+            html += '</tr>';
+        }
+        document.getElementById(el).innerHTML = html;
+    }
+
+    /* ── Grid interactions ── */
+
+    function toggleCorners(btn) {
+        var fig = btn.closest('.grid-figure');
+        var tbl = fig.querySelector('table');
+        var hidden = tbl.classList.toggle('grid-corners-hidden');
+        btn.textContent = hidden ? 'Show corners' : 'Hide corners';
+        tbl.querySelectorAll('.corner').forEach(function(td) {
+            td.textContent = hidden ? '*' : td.getAttribute('data-letter');
+        });
+    }
+
+    function toggleSortView(btn) {
+        var fig = document.getElementById('crossing-scan-grid');
+        var showing = fig.getAttribute('data-view') === 'window';
+        fig.setAttribute('data-view', showing ? 'scores' : 'window');
+        btn.textContent = showing ? 'Show initial scan window' : 'Show length sums';
+
+        fig.querySelectorAll('td[data-score]').forEach(function(td) {
+            if (showing) {
+                td.textContent = td.getAttribute('data-score');
+                td.classList.remove('scan-window');
+                td.classList.add('fill');
+            } else {
+                var rank = td.getAttribute('data-rank');
+                if (rank) {
+                    td.textContent = rank;
+                    td.classList.remove('fill');
+                    td.classList.add('scan-window');
+                } else {
+                    td.textContent = '';
+                }
+            }
+        });
+    }
+
+    /* ── Fill animation ── */
+
+    // Render animation grid. Uppercase=anim-cell (gets ID), lowercase=prefilled (no ID).
+    // Returns { branches: [id,...], propagated: [id,...] } for animation control.
+    function renderAnimGrid(el, gridStr, prefix, branchCoords) {
+        var lines = gridStr.trim().split('\n');
+        var branchSet = {};
+        branchCoords.forEach(function(b) { branchSet[b[0] + ',' + b[1]] = true; });
+        var propagated = [];
+        var html = '';
+        for (var r = 0; r < lines.length; r++) {
+            html += '<tr>';
+            for (var c = 0; c < lines[r].length; c++) {
+                var ch = lines[r][c];
+                if (ch === '#') {
+                    html += '<td class="black"></td>';
+                } else if (ch === '*') {
+                    html += '<td class="wild">*</td>';
+                } else if (ch >= 'a' && ch <= 'z') {
+                    html += '<td class="prefilled-anim letter">' + ch.toUpperCase() + '</td>';
+                } else {
+                    var id = prefix + '-' + r + '-' + c;
+                    html += '<td id="' + id + '" class="anim-cell">' + ch + '</td>';
+                    if (!branchSet[r + ',' + c]) propagated.push(id);
+                }
+            }
+            html += '</tr>';
+        }
+        document.getElementById(el).querySelector('table').innerHTML = html;
+        return {
+            branches: branchCoords.map(function(b) { return prefix + '-' + b[0] + '-' + b[1]; }),
+            propagated: propagated
+        };
+    }
+
+    function resetAnim(id) {
+        var el = document.getElementById(id);
+        el.classList.remove('playing');
+        var data = animData[id];
+        data.branches.concat(data.propagated).forEach(function(cid) {
+            var c = document.getElementById(cid);
+            if (c) {
+                c.style.animationDelay = '';
+                c.style.background = '';
+                c.style.color = '';
+                c.className = 'anim-cell';
+            }
+        });
+    }
+
+    function playAnim(id) {
+        resetAnim(id);
+        var el = document.getElementById(id);
+        var data = animData[id];
+        var delay = 0;
+        var branchInterval = 600; // ms between branch decisions
+        var propDelay;             // ms for propagated cells (staggered)
+
+        // Branch decisions: appear one by one
+        data.branches.forEach(function(cid, i) {
+            var c = document.getElementById(cid);
+            if (c) {
+                c.style.animationDelay = delay + 'ms';
+                c.style.background = 'var(--red)';
+                c.style.color = 'var(--bg)';
+            }
+            delay += branchInterval;
+        });
+
+        // After all branches, pause then reveal propagated cells in a wave
+        delay += 400;
+        propDelay = delay;
+        var propInterval = 25; // fast stagger
+        data.propagated.forEach(function(cid, i) {
+            var c = document.getElementById(cid);
+            if (c) {
+                c.style.animationDelay = (propDelay + i * propInterval) + 'ms';
+                c.style.background = 'var(--green)';
+                c.style.color = 'var(--bg)';
+            }
+        });
+
+        // Trigger animations
+        requestAnimationFrame(function() {
+            el.classList.add('playing');
+        });
+    }
+
+    </script>
+</head>
+<body>
+<article>
+
+<h1>How Orca Works</h1>
+<p class="subtitle">
+    Inside a high-performance crossword grid filler.
+</p>
+<p class="byline">John Hawksley &middot; March 12, 2026</p>
+
+<p class="lede">
+    Orca is a high-performance crossword grid filler, specializing in exhaustive search over wide-open grids with large unconstrained regions.
+</p>
+
+<nav class="toc">
+    <h3>Contents</h3>
+    <ol>
+        <li><a href="#introduction">Introduction</a></li>
+        <li><a href="#benchmarks">Benchmarks</a></li>
+        <li><a href="#propagation">Solver &ndash; Propagation</a></li>
+        <li><a href="#branching">Solver &ndash; Branching</a></li>
+        <li><a href="#optimizations">Making It Fast</a></li>
+        <li><a href="#extra">Extra Constraints</a></li>
+        <li><a href="#parallel">Parallel Processing</a></li>
+        <li><a href="#screenshots">Screenshots</a></li>
+        <li><a href="#conclusion">Final Notes</a></li>
+    </ol>
+</nav>
+
+<svg class="acronym-hero" viewBox="0 0 420 150" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="heroWave" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="var(--bg)"/>
+            <stop offset="15%" stop-color="var(--blue-dark)" stop-opacity="0.3"/>
+            <stop offset="50%" stop-color="var(--green-dark)" stop-opacity="0.4"/>
+            <stop offset="85%" stop-color="var(--blue-dark)" stop-opacity="0.3"/>
+            <stop offset="100%" stop-color="var(--bg)"/>
+        </linearGradient>
+        <linearGradient id="orcaGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="var(--blue-dark)"/>
+            <stop offset="50%" stop-color="#2a7a6a"/>
+            <stop offset="100%" stop-color="var(--blue-dark)"/>
+        </linearGradient>
+    </defs>
+    <!-- Top wave -->
+    <path d="M0,18 Q60,6 120,14 T240,12 T360,16 T420,10" fill="none" stroke="url(#heroWave)" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M0,23 Q70,12 140,20 T280,16 T420,14" fill="none" stroke="url(#heroWave)" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/>
+    <!-- Acronym words -->
+    <text x="210" y="58" text-anchor="middle" font-family="var(--sans)" font-size="18" fill="var(--caption)" letter-spacing="0.5">
+        <tspan fill="var(--blue-dark)" font-weight="700" font-size="21">O</tspan>ptimized
+        <tspan fill="var(--blue-dark)" font-weight="700" font-size="21">R</tspan>apid
+        <tspan fill="var(--blue-dark)" font-weight="700" font-size="21">C</tspan>rossword
+        <tspan fill="var(--blue-dark)" font-weight="700" font-size="21">A</tspan>utofiller
+    </text>
+    <!-- ORCA -->
+    <text x="210" y="120" text-anchor="middle" font-family="var(--sans)" font-size="52" font-weight="800" fill="url(#orcaGrad)" letter-spacing="12">ORCA</text>
+    <!-- Bottom wave -->
+    <path d="M0,138 Q80,130 160,136 T320,132 T420,140" fill="none" stroke="url(#heroWave)" stroke-width="1.5" stroke-linecap="round"/>
+    <path d="M0,143 Q90,134 180,142 T360,137 T420,144" fill="none" stroke="url(#heroWave)" stroke-width="0.8" stroke-linecap="round" opacity="0.5"/>
+</svg>
+
+<!-- ============================================================ -->
+<h2 id="introduction">1. Introduction</h2>
+
+<p>
+    Crossword constructors typically use software to fill their puzzle with words, curating a grid with their favorite fun entries and minimal junk:
+</p>
+
+<div class="grid-figure">
+    <div class="grid-pair">
+    <div>
+    <table id="random-grid"></table>
+    <p class="caption">Random fill</p>
+    </div>
+    <script>
+    (function() {
+      var opts = [
+        {grid: 'AWL#DSL\nCHOSETO\nTITANAE\nSTENNIS\nSTRAINS\nALIENEE\nDEA#GRR', hl: '...#...\n.......\nrrrrrrr\n.......\n.......\n.......\n...#...'},
+        {grid: 'CMA#SAT\nOILLINE\nALBERTS\nSEEDLET\nTORTONI\nANTOINE\nLEA#NAR', hl: '...#...\n.......\nrrrrrrr\n.......\n.......\n.......\n...#...'},
+        {grid: 'TIC#RSS\nIMOGENE\nMAUREEN\nIGNORED\nNETWARE\nGROSSER\nSSN#EDS', hl: '...#...\nrrrrrrr\n.......\n.......\n.......\n.......\n...#...'}
+      ];
+      var table = document.getElementById('random-grid');
+      renderGridTable(table, opts[0].grid, opts[0].hl);
+      var cur = 0;
+      function next() {
+        cur = (cur + 1) % opts.length;
+        table.style.opacity = '0';
+        setTimeout(function() {
+          renderGridTable(table, opts[cur].grid, opts[cur].hl);
+          table.style.opacity = '';
+        }, 120);
+        setTimeout(next, 5000);
+      }
+      setTimeout(next, 5000);
+    })();
+    </script>
+    <div>
+    <table id="curated-grid"></table>
+    <script>renderGridTable('curated-grid',
+        'CSI#RAH\nHANSOLO\nINHIBIT\nATACOST\nPALETTE\nENEMIES\nTAR#CRT',
+        '...#...\nggggggg\n.......\n.......\n.......\n.......\n...#...');</script>
+    <p class="caption">Curated fill</p>
+    </div>
+    </div>
+</div>
+
+<p>
+    However, boundary-pushing grids &ndash; like the highly interlocking one below &ndash; are a major computational challenge for existing software. As the puzzle author, it took me <strong>six months</strong> of computer time (using <em>Crossword Compiler</em> for exhaustive search) to find this set of ten 11-letter entries for the cavernous center region:
+</p>
+
+<div class="grid-figure">
+    <div class="grid-toggle-wrap"><button class="grid-toggle-btn" onclick="toggleCorners(this)">Show corners</button></div>
+    <table class="grid-corners-hidden">
+        <tr><td class="letter corner" data-letter="S">*</td><td class="letter corner" data-letter="L">*</td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="I">*</td><td class="letter corner" data-letter="G">*</td><td class="letter">H</td><td class="black"></td><td class="black"></td><td class="black"></td><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="L">*</td><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="R">*</td><td class="letter corner" data-letter="M">*</td><td class="letter corner" data-letter="S">*</td></tr>
+        <tr><td class="letter corner" data-letter="H">*</td><td class="letter corner" data-letter="O">*</td><td class="letter corner" data-letter="T">*</td><td class="letter corner" data-letter="S">*</td><td class="letter corner" data-letter="E">*</td><td class="letter">A</td><td class="letter">T</td><td class="black"></td><td class="black"></td><td class="letter corner" data-letter="B">*</td><td class="letter corner" data-letter="U">*</td><td class="letter corner" data-letter="R">*</td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="U">*</td></tr>
+        <tr><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="C">*</td><td class="letter corner" data-letter="H">*</td><td class="letter corner" data-letter="I">*</td><td class="letter corner" data-letter="L">*</td><td class="letter">L</td><td class="letter">E</td><td class="letter">S</td><td class="black"></td><td class="letter corner" data-letter="C">*</td><td class="letter corner" data-letter="R">*</td><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="M">*</td><td class="letter corner" data-letter="I">*</td><td class="letter corner" data-letter="N">*</td></tr>
+        <tr><td class="letter corner" data-letter="M">*</td><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="I">*</td><td class="letter corner" data-letter="A">*</td><td class="black"></td><td class="letter">O</td><td class="letter">L</td><td class="letter">E</td><td class="letter">S</td><td class="black"></td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="M">*</td><td class="letter corner" data-letter="I">*</td><td class="letter corner" data-letter="T">*</td><td class="letter corner" data-letter="S">*</td></tr>
+        <tr><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="T">*</td><td class="letter corner" data-letter="C">*</td><td class="letter corner" data-letter="H">*</td><td class="black"></td><td class="letter">G</td><td class="letter">E</td><td class="letter">T</td><td class="letter">T</td><td class="letter">O</td><td class="black"></td><td class="black"></td><td class="letter corner" data-letter="N">*</td><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="E">*</td></tr>
+        <tr><td class="letter corner" data-letter="D">*</td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="S">*</td><td class="black"></td><td class="letter">H</td><td class="letter">E</td><td class="letter">S</td><td class="letter">T</td><td class="letter">A</td><td class="letter">R</td><td class="letter">T</td><td class="letter">E</td><td class="letter">D</td><td class="letter">I</td><td class="letter">T</td></tr>
+        <tr><td class="black"></td><td class="black"></td><td class="black"></td><td class="letter">C</td><td class="letter">I</td><td class="letter">N</td><td class="letter">C</td><td class="letter">I</td><td class="letter">N</td><td class="letter">N</td><td class="letter">A</td><td class="letter">T</td><td class="letter">U</td><td class="letter">S</td><td class="black"></td></tr>
+        <tr><td class="black"></td><td class="black"></td><td class="letter">C</td><td class="letter">A</td><td class="letter">R</td><td class="letter">B</td><td class="letter">O</td><td class="letter">N</td><td class="letter">D</td><td class="letter">A</td><td class="letter">T</td><td class="letter">E</td><td class="letter">S</td><td class="black"></td><td class="black"></td></tr>
+        <tr><td class="black"></td><td class="letter">M</td><td class="letter">A</td><td class="letter">K</td><td class="letter">E</td><td class="letter">U</td><td class="letter">P</td><td class="letter">G</td><td class="letter">A</td><td class="letter">M</td><td class="letter">E</td><td class="letter">S</td><td class="black"></td><td class="black"></td><td class="black"></td></tr>
+        <tr><td class="letter">P</td><td class="letter">O</td><td class="letter">W</td><td class="letter">E</td><td class="letter">R</td><td class="letter">L</td><td class="letter">I</td><td class="letter">F</td><td class="letter">T</td><td class="letter">E</td><td class="letter">R</td><td class="black"></td><td class="letter corner" data-letter="T">*</td><td class="letter corner" data-letter="B">*</td><td class="letter corner" data-letter="H">*</td></tr>
+        <tr><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="M">*</td><td class="letter corner" data-letter="C">*</td><td class="black"></td><td class="black"></td><td class="letter">B</td><td class="letter">U</td><td class="letter">R</td><td class="letter">E</td><td class="letter">N</td><td class="black"></td><td class="letter corner" data-letter="L">*</td><td class="letter corner" data-letter="I">*</td><td class="letter corner" data-letter="R">*</td><td class="letter corner" data-letter="A">*</td></tr>
+        <tr><td class="letter corner" data-letter="S">*</td><td class="letter corner" data-letter="C">*</td><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="L">*</td><td class="letter corner" data-letter="E">*</td><td class="black"></td><td class="letter">M</td><td class="letter">E</td><td class="letter">A</td><td class="letter">T</td><td class="black"></td><td class="letter corner" data-letter="I">*</td><td class="letter corner" data-letter="R">*</td><td class="letter corner" data-letter="O">*</td><td class="letter corner" data-letter="N">*</td></tr>
+        <tr><td class="letter corner" data-letter="S">*</td><td class="letter corner" data-letter="A">*</td><td class="letter corner" data-letter="W">*</td><td class="letter corner" data-letter="Y">*</td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="R">*</td><td class="black"></td><td class="letter">E</td><td class="letter">S</td><td class="letter">I</td><td class="letter corner" data-letter="G">*</td><td class="letter corner" data-letter="N">*</td><td class="letter corner" data-letter="I">*</td><td class="letter corner" data-letter="N">*</td><td class="letter corner" data-letter="G">*</td></tr>
+        <tr><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="V">*</td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="R">*</td><td class="letter corner" data-letter="L">*</td><td class="letter corner" data-letter="Y">*</td><td class="black"></td><td class="black"></td><td class="letter">E</td><td class="letter">N</td><td class="letter corner" data-letter="T">*</td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="N">*</td><td class="letter corner" data-letter="T">*</td><td class="letter corner" data-letter="E">*</td></tr>
+        <tr><td class="letter corner" data-letter="R">*</td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="D">*</td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="Y">*</td><td class="letter corner" data-letter="E">*</td><td class="black"></td><td class="black"></td><td class="black"></td><td class="letter">G</td><td class="letter corner" data-letter="I">*</td><td class="letter corner" data-letter="N">*</td><td class="letter corner" data-letter="G">*</td><td class="letter corner" data-letter="E">*</td><td class="letter corner" data-letter="R">*</td></tr>
+    </table>
+    <p class="caption"><strong>New York Times Crossword</strong>, Saturday, June 10, 2023<br>Author: John Hawksley</p>
+</div>
+
+<p>
+    <em>Exhaustive search</em> is necessary to find the best quality fill &ndash; the above grid only has a small number of possible options, feasible to review by hand. Even thornier grids might have no options at all.
+</p>
+
+<p>
+    Orca is built for exactly this kind of problem. With Orca distributed across 500 spot instances on Google Cloud, I completed an exhaustive search in <strong>one hour</strong> for
+    about <strong>$10</strong> in compute costs. On a typical computer with eight threads (like the one <em>Crossword Compiler</em> ran on for six months), the search would still only take a few days.
+</p>
+
+<p>
+    Two innovations make this possible:
+</p>
+
+<ol>
+    <li>
+        A <strong>core solver</strong> written in <a href="https://rust-lang.org/">Rust</a>, with a novel search strategy and many optimizations &ndash; 5 to 100x faster (depending on the grid) than the fastest alternative I tested.
+    </li>
+    <li>
+        A <strong>distributed search framework</strong> that can efficiently utilize hundreds of CPUs, turning jobs that would take months into ones that finish in under an hour.
+    </li>
+</ol>
+
+<h2 id="benchmarks">2. Benchmarks</h2>
+
+<p>On two benchmark grids, Orca finishes an exhaustive search quickly while other software struggles.</p>
+
+<div class="bench-chart-wrap">
+<!-- 7×7 benchmark: bars x=0..520, max=32min, scale=520/32=16.25px/min -->
+<div class="bench-section">
+    <div class="bench-title grid-trigger" onmouseenter="showTooltip(event,'grid7')" onmouseleave="hideTooltip('grid7')">7&times;7, no black squares, 2 seed letters</div>
+    <svg viewBox="0 0 520 60" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+        <!-- gridlines spanning both bars -->
+        <line x1="65" y1="0" x2="65" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="130" y1="0" x2="130" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="195" y1="0" x2="195" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="260" y1="0" x2="260" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="325" y1="0" x2="325" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="390" y1="0" x2="390" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="455" y1="0" x2="455" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="520" y1="0" x2="520" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <!-- Orca: 5.267min × 16.25 = 85.6 -->
+        <rect x="0" y="0" width="85.6" height="26" rx="3" fill="var(--green-dark)" onmouseenter="showSwTip(event,'orca')" onmouseleave="hideTooltip('swTip')"/>
+        <text x="90.6" y="17.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Orca &#x2009; <tspan font-style="italic">5 min 16 sec</tspan></text>
+        <!-- Crossword Compiler: 30.5min × 16.25 = 495.6 -->
+        <rect x="0" y="34" width="495.6" height="26" rx="3" fill="var(--silver)" onmouseenter="showSwTip(event,'cc')" onmouseleave="hideTooltip('swTip')"/>
+        <text x="5" y="51.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Crossword Compiler &#x2009; <tspan font-style="italic">30 min 30 sec</tspan></text>
+    </svg>
+    <svg viewBox="0 0 520 16" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+        <line x1="0" y1="0" x2="520" y2="0" stroke="var(--border)" stroke-width="1"/>
+        <line x1="0" y1="0" x2="0" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="0" y="14" text-anchor="start" font-size="11" fill="var(--text)">0</text>
+        <line x1="65" y1="0" x2="65" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="65" y="14" text-anchor="middle" font-size="11" fill="var(--text)">4m</text>
+        <line x1="130" y1="0" x2="130" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="130" y="14" text-anchor="middle" font-size="11" fill="var(--text)">8m</text>
+        <line x1="195" y1="0" x2="195" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="195" y="14" text-anchor="middle" font-size="11" fill="var(--text)">12m</text>
+        <line x1="260" y1="0" x2="260" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="260" y="14" text-anchor="middle" font-size="11" fill="var(--text)">16m</text>
+        <line x1="325" y1="0" x2="325" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="325" y="14" text-anchor="middle" font-size="11" fill="var(--text)">20m</text>
+        <line x1="390" y1="0" x2="390" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="390" y="14" text-anchor="middle" font-size="11" fill="var(--text)">24m</text>
+        <line x1="455" y1="0" x2="455" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="455" y="14" text-anchor="middle" font-size="11" fill="var(--text)">28m</text>
+        <line x1="520" y1="0" x2="520" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="520" y="14" text-anchor="end" font-size="11" fill="var(--text)">32m</text>
+    </svg>
+</div>
+
+<!-- 15×15 benchmark: bars x=0..520, max=7hr=420min, scale=520/420=1.2381px/min -->
+<div class="bench-section">
+    <div class="bench-title grid-trigger" onmouseenter="showTooltip(event,'grid15')" onmouseleave="hideTooltip('grid15')">15&times;15, not filling corners, 4 seed letters</div>
+    <svg viewBox="0 0 520 60" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+        <!-- gridlines spanning both bars -->
+        <line x1="74.3" y1="0" x2="74.3" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="148.6" y1="0" x2="148.6" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="222.9" y1="0" x2="222.9" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="297.1" y1="0" x2="297.1" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="371.4" y1="0" x2="371.4" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="445.7" y1="0" x2="445.7" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <line x1="520" y1="0" x2="520" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <!-- Orca -->
+        <rect x="0" y="0" width="5" height="26" rx="1" fill="var(--green-dark)" onmouseenter="showSwTip(event,'orca')" onmouseleave="hideTooltip('swTip')"/>
+        <text x="10" y="17.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Orca &#x2009; <tspan font-style="italic">3 min 41 sec</tspan></text>
+        <!-- Crossword Compiler -->
+        <rect x="0" y="34" width="514" height="26" rx="3" fill="var(--silver)" onmouseenter="showSwTip(event,'cc')" onmouseleave="hideTooltip('swTip')"/>
+        <text x="5" y="51.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Crossword Compiler &#x2009; <tspan font-style="italic">6 hrs 55 min</tspan></text>
+    </svg>
+    <svg viewBox="0 0 520 16" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block;">
+        <line x1="0" y1="0" x2="520" y2="0" stroke="var(--border)" stroke-width="1"/>
+        <line x1="0" y1="0" x2="0" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="0" y="14" text-anchor="start" font-size="11" fill="var(--text)">0</text>
+        <line x1="74.3" y1="0" x2="74.3" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="74.3" y="14" text-anchor="middle" font-size="11" fill="var(--text)">1h</text>
+        <line x1="148.6" y1="0" x2="148.6" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="148.6" y="14" text-anchor="middle" font-size="11" fill="var(--text)">2h</text>
+        <line x1="222.9" y1="0" x2="222.9" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="222.9" y="14" text-anchor="middle" font-size="11" fill="var(--text)">3h</text>
+        <line x1="297.1" y1="0" x2="297.1" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="297.1" y="14" text-anchor="middle" font-size="11" fill="var(--text)">4h</text>
+        <line x1="371.4" y1="0" x2="371.4" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="371.4" y="14" text-anchor="middle" font-size="11" fill="var(--text)">5h</text>
+        <line x1="445.7" y1="0" x2="445.7" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="445.7" y="14" text-anchor="middle" font-size="11" fill="var(--text)">6h</text>
+        <line x1="520" y1="0" x2="520" y2="4" stroke="var(--border)" stroke-width="1"/>
+        <text x="520" y="14" text-anchor="end" font-size="11" fill="var(--text)">7h</text>
+    </svg>
+</div>
+
+<div class="bench-tooltip tooltip-box" id="grid7"></div>
+<div class="bench-tooltip tooltip-box" id="grid15"></div>
+<div class="bench-tooltip tooltip-box" id="swTip"></div>
+</div>
+<script>
+var GRID_7x7 = 'H......\n.T.....\n.......\n.......\n.......\n.......\n.......';
+var GRID_15x15 = '*****.###******\n*****..##******\n*****...#******\n****#....#*****\n****#.....##***\n***#...........\n###...........#\n##....ONDA...##\n#...........###\n...........#***\n***##.....#****\n*****#....#****\n******#...*****\n******##..*****\n******###.*****';
+renderGridSvg('grid7', GRID_7x7, 16);
+renderGridSvg('grid15', GRID_15x15, 11);
+</script>
+<p class="bench-note">Single thread exhaustive search, same <span class="has-tip">hardware<span class="tip tooltip-box">Windows 11 Pro &middot; AMD Ryzen AI Max 390 &middot; 64 GB RAM 8000 MT/s</span></span> and <span class="has-tip">dictionary<span class="tip tooltip-box">33,000 7-letter words &middot; 35,000 11-letter words &middot; 411,000 total 3-15 letter words</span></span>.<br>Crossfire, Crosserville, and Ingrid were also tested but were much slower.</p>
+
+<p>
+    The 15&times;15 benchmark has a wider gap than the 7&times;7 &ndash; since its grid is larger and less uniform, it's more sensitive to <em>search strategy</em>, e.g. the order in which slots are filled.
+</p>
+
+<h3>Multithreaded scaling</h3>
+
+<p>
+    Orca parallelizes with low overhead, and scales well across cores:
+</p>
+
+<div class="grid-figure tooltip-wrap">
+    <p style="text-align:center; font-family:var(--sans); font-size:13px; font-weight:700; color:var(--text); margin:0 0 -24px;">Thread count vs. solve time</p>
+    <svg id="thread-chart" viewBox="0 0 700 370" width="700" height="370" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;">
+
+        <!-- Y axis title -->
+        <text x="-2" y="185" text-anchor="middle" font-size="12" fill="var(--caption)" transform="rotate(-90 -2 175)">Solve time (minutes)</text>
+
+        <!-- Chart area: x=50..650, y=40..310;  Y: 0 to 4 minutes (240s) -->
+        <!-- Y axis -->
+        <line x1="50" y1="40" x2="50" y2="310" stroke="var(--border)" stroke-width="1"/>
+        <!-- 0 -->
+        <text x="42" y="314" text-anchor="end" font-size="11" fill="var(--caption)">0</text>
+        <line x1="47" y1="310" x2="50" y2="310" stroke="var(--caption)" stroke-width="1"/>
+        <!-- 1 min -->
+        <text x="42" y="247" text-anchor="end" font-size="11" fill="var(--caption)">1</text>
+        <line x1="47" y1="243" x2="50" y2="243" stroke="var(--caption)" stroke-width="1"/>
+        <line x1="50" y1="243" x2="650" y2="243" stroke="var(--muted-bg)" stroke-width="0.5"/>
+        <!-- 2 min -->
+        <text x="42" y="179" text-anchor="end" font-size="11" fill="var(--caption)">2</text>
+        <line x1="47" y1="175" x2="50" y2="175" stroke="var(--caption)" stroke-width="1"/>
+        <line x1="50" y1="175" x2="650" y2="175" stroke="var(--muted-bg)" stroke-width="0.5"/>
+        <!-- 3 min -->
+        <text x="42" y="112" text-anchor="end" font-size="11" fill="var(--caption)">3</text>
+        <line x1="47" y1="108" x2="50" y2="108" stroke="var(--caption)" stroke-width="1"/>
+        <line x1="50" y1="108" x2="650" y2="108" stroke="var(--muted-bg)" stroke-width="0.5"/>
+        <!-- 4 min -->
+        <text x="42" y="44" text-anchor="end" font-size="11" fill="var(--caption)">4</text>
+        <line x1="47" y1="40" x2="50" y2="40" stroke="var(--caption)" stroke-width="1"/>
+        <line x1="50" y1="40" x2="650" y2="40" stroke="var(--muted-bg)" stroke-width="0.5"/>
+
+        <!-- X axis -->
+        <line x1="50" y1="310" x2="650" y2="310" stroke="var(--border)" stroke-width="1"/>
+        <!-- X scale: x(t) = 50 + (t-1) * 54.55 for t=1..12
+             1→50  2→105  3→159  4→214  5→268  6→323  7→377  8→432  9→486  10→541  11→595  12→650
+             Y scale: y(s) = 310 - (s/240) * 270 -->
+        <text x="50"  y="326" text-anchor="middle" font-size="11" fill="var(--caption)">1</text>
+        <text x="105" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">2</text>
+        <text x="159" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">3</text>
+        <text x="214" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">4</text>
+        <text x="268" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">5</text>
+        <text x="323" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">6</text>
+        <text x="377" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">7</text>
+        <text x="432" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">8</text>
+        <text x="486" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">9</text>
+        <text x="541" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">10</text>
+        <text x="595" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">11</text>
+        <text x="650" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">12</text>
+        <text x="350" y="350" text-anchor="middle" font-size="12" fill="var(--caption)">Threads</text>
+
+        <!-- 15x15 data (seconds, split=2.5s): 1/220.7 2/129.5 3/99.2 4/74.9 5/66.3 6/54.8 7/49.4 8/43.9 9/40.9 10/37.2 11/34.1 12/31.6 -->
+
+        <!-- 15x15 line (blue) -->
+        <polyline fill="none" stroke="var(--blue-dark)" stroke-width="2" stroke-linejoin="round"
+            points="50,62 105,164 159,198 214,226 268,235 323,248 377,254 432,261 486,264 541,268 595,272 650,275"/>
+        <circle cx="50"  cy="62"  r="3" fill="var(--blue-dark)"/>
+        <circle cx="105" cy="164" r="3" fill="var(--blue-dark)"/>
+        <circle cx="159" cy="198" r="3" fill="var(--blue-dark)"/>
+        <circle cx="214" cy="226" r="3" fill="var(--blue-dark)"/>
+        <circle cx="268" cy="235" r="3" fill="var(--blue-dark)"/>
+        <circle cx="323" cy="248" r="3" fill="var(--blue-dark)"/>
+        <circle cx="377" cy="254" r="3" fill="var(--blue-dark)"/>
+        <circle cx="432" cy="261" r="3" fill="var(--blue-dark)"/>
+        <circle cx="486" cy="264" r="3" fill="var(--blue-dark)"/>
+        <circle cx="541" cy="268" r="3" fill="var(--blue-dark)"/>
+        <circle cx="595" cy="272" r="3" fill="var(--blue-dark)"/>
+        <circle cx="650" cy="275" r="3" fill="var(--blue-dark)"/>
+
+        <!-- Label on line -->
+        <text x="65" y="55" font-size="15" font-weight="600" fill="var(--blue-dark)" class="grid-trigger" style="text-decoration-color:var(--blue-underline);" onmouseenter="showTooltip(event,'threadGrid15')" onmouseleave="hideTooltip('threadGrid15')">15&times;15</text>
+    </svg>
+<div class="bench-tooltip tooltip-box" id="threadGrid15"></div>
+<div class="bench-tooltip tooltip-box" id="threadDotTip"></div>
+<p class="bench-note caption-center" style="margin-top:0;">Multithreaded exhaustive search &ndash; same <span class="has-tip">hardware<span class="tip tooltip-box">Windows 11 Pro &middot; AMD Ryzen AI Max 390 &middot; 64 GB RAM 8000 MT/s</span></span> and <span class="has-tip">dictionary<span class="tip tooltip-box">33,000 7-letter words &middot; 35,000 11-letter words &middot; 411,000 total 3-15 letter words</span></span> as above.</p>
+</div>
+<script>
+renderGridSvg('threadGrid15', GRID_15x15, 11);
+
+// Dot hover tooltips for thread scaling chart
+(function() {
+    var secs15 = {50:220.7,105:129.5,159:99.2,214:74.9,268:66.3,323:54.8,377:49.4,432:43.9,486:40.9,541:37.2,595:34.1,650:31.6};
+    var base15 = 220.7;
+    var cxToT = {50:1,105:2,159:3,214:4,268:5,323:6,377:7,432:8,486:9,541:10,595:11,650:12};
+    var tip = document.getElementById('threadDotTip');
+    var svg = document.getElementById('thread-chart');
+    var wrap = svg.closest('div');
+    svg.querySelectorAll('circle').forEach(function(c) {
+        var cx = Math.round(parseFloat(c.getAttribute('cx')));
+        var t = cxToT[cx];
+        if (!t) return;
+        var s = secs15[cx];
+        if (!s) return;
+        var speedup = (base15 / s).toFixed(1);
+        var origR = c.getAttribute('r');
+        c.style.cursor = 'pointer';
+        c.addEventListener('mouseenter', function() {
+            c.setAttribute('r', parseFloat(origR) + 1.5);
+            var m = Math.floor(s / 60);
+            var sec = Math.round(s % 60);
+            var timeStr = m > 0 ? m + 'm ' + sec + 's' : sec + 's';
+            tip.innerHTML = '<strong>' + t + ' thread' + (t>1?'s':'') + '</strong>\u2003' + timeStr + '\u2003(' + speedup + '\u00d7)';
+            tip.classList.add('visible');
+            var cRect = c.getBoundingClientRect();
+            var wRect = wrap.getBoundingClientRect();
+            tip.style.left = (cRect.left + cRect.width/2 - wRect.left - tip.offsetWidth/2) + 'px';
+            tip.style.top = (cRect.top - wRect.top - tip.offsetHeight - 8) + 'px';
+        });
+        c.addEventListener('mouseleave', function() {
+            c.setAttribute('r', origR);
+            if (!lastEventWasTouch) tip.classList.remove('visible');
+        });
+    });
+})();
+</script>
+
+<p>
+    The following three sections on <a href="#propagation">Propagation</a>, <a href="#branching">Branching</a>, and <a href="#optimizations">Optimizations</a> explain how Orca is so fast.
+</p>
+
+<!-- ============================================================ -->
+<h2 id="propagation">3. Solver &ndash; Propagation</h2>
+
+<p>
+    Crossword puzzle filling is a <a href="https://en.wikipedia.org/wiki/Constraint_satisfaction_problem">constraint satisfaction problem</a>:
+</p>
+
+<ul>
+    <li><strong>Variables</strong> &mdash; across and down slots.</li>
+    <li><strong>Domains</strong> &mdash; dictionary words (or phrases) of the right length.</li>
+    <li><strong>Constraints</strong> &mdash; crossing letters must agree.</li>
+</ul>
+
+<p>
+    Constructors spend a lot of time improving their dictionaries of words suitable for crosswords. My personal dictionary has 411,000 words of 3 to 15 letters:
+</p>
+
+<div class="grid-figure tooltip-wrap" style="margin:20px 0;">
+    <svg viewBox="0 0 510 165" width="536" height="173" xmlns="http://www.w3.org/2000/svg">
+        <!-- Y axis -->
+        <line x1="25" y1="10" x2="25" y2="110" stroke="var(--border)" stroke-width="1"/>
+        <!-- Y labels -->
+        <text x="20" y="114" text-anchor="end" font-size="11" fill="var(--caption)">0</text>
+        <text x="20" y="66" text-anchor="end" font-size="11" fill="var(--caption)">30K</text>
+        <line x1="25" y1="62" x2="480" y2="62" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <text x="20" y="18" text-anchor="end" font-size="11" fill="var(--caption)">60K</text>
+        <line x1="25" y1="14" x2="480" y2="14" stroke="var(--rule-gray)" stroke-width="0.5"/>
+        <!-- Bars: max=62213, height range=100px, x starts at 35, bar_width=30, gap=5 -->
+        <!-- len 3: 2658 → 4px -->
+        <rect x="35" y="106" width="30" height="4" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,3)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="50" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">3</text>
+        <text x="50" y="103" text-anchor="middle" font-size="10" fill="var(--caption)">2.7K</text>
+        <!-- len 4: 6825 → 11px -->
+        <rect x="70" y="99" width="30" height="11" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,4)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="85" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">4</text>
+        <text x="85" y="96" text-anchor="middle" font-size="10" fill="var(--caption)">6.8K</text>
+        <!-- len 5: 12611 → 20px -->
+        <rect x="105" y="90" width="30" height="20" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,5)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="120" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">5</text>
+        <text x="120" y="87" text-anchor="middle" font-size="10" fill="var(--caption)">12.6K</text>
+        <!-- len 6: 22786 → 37px -->
+        <rect x="140" y="73" width="30" height="37" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,6)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="155" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">6</text>
+        <text x="155" y="70" text-anchor="middle" font-size="10" fill="var(--caption)">22.8K</text>
+        <!-- len 7: 32952 → 53px -->
+        <rect x="175" y="57" width="30" height="53" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,7)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="190" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">7</text>
+        <text x="190" y="54" text-anchor="middle" font-size="10" fill="var(--caption)">33.0K</text>
+        <!-- len 8: 42606 → 69px -->
+        <rect x="210" y="41" width="30" height="69" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,8)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="225" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">8</text>
+        <text x="225" y="38" text-anchor="middle" font-size="10" fill="var(--caption)">42.6K</text>
+        <!-- len 9: 43714 → 70px -->
+        <rect x="245" y="40" width="30" height="70" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,9)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="260" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">9</text>
+        <text x="260" y="37" text-anchor="middle" font-size="10" fill="var(--caption)">43.7K</text>
+        <!-- len 10: 62213 → 100px -->
+        <rect x="280" y="10" width="30" height="100" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,10)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="295" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">10</text>
+        <text x="295" y="23" text-anchor="middle" font-size="10" fill="var(--bg)" font-weight="600">62.2K</text>
+        <!-- len 11: 34696 → 56px (pruned) -->
+        <rect x="315" y="54" width="30" height="56" rx="2" fill="var(--red-dark)" onmouseenter="showDictTip(event,11)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="330" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">11</text>
+        <text x="330" y="51" text-anchor="middle" font-size="10" fill="var(--caption)">34.7K</text>
+        <!-- len 12: 49824 → 80px -->
+        <rect x="350" y="30" width="30" height="80" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,12)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="365" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">12</text>
+        <text x="365" y="27" text-anchor="middle" font-size="10" fill="var(--caption)">49.8K</text>
+        <!-- len 13: 33608 → 54px (pruned) -->
+        <rect x="385" y="56" width="30" height="54" rx="2" fill="var(--red-dark)" onmouseenter="showDictTip(event,13)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="400" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">13</text>
+        <text x="400" y="53" text-anchor="middle" font-size="10" fill="var(--caption)">33.6K</text>
+        <!-- len 14: 34613 → 56px -->
+        <rect x="420" y="54" width="30" height="56" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,14)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="435" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">14</text>
+        <text x="435" y="51" text-anchor="middle" font-size="10" fill="var(--caption)">34.6K</text>
+        <!-- len 15: 32180 → 52px -->
+        <rect x="455" y="58" width="30" height="52" rx="2" fill="var(--blue-dark)" onmouseenter="showDictTip(event,15)" onmouseleave="hideTooltip('dictTip')"/>
+        <text x="470" y="123" text-anchor="middle" font-size="11" fill="var(--caption)">15</text>
+        <text x="470" y="55" text-anchor="middle" font-size="10" fill="var(--caption)">32.2K</text>
+        <!-- X axis label -->
+        <text x="260" y="140" text-anchor="middle" font-size="12" fill="var(--caption)">Word length</text>
+        <!-- Legend -->
+        <rect x="35" y="150" width="10" height="10" rx="1" fill="var(--red-dark)"/>
+        <text x="49" y="159" font-size="11" fill="var(--caption)">Lengths 11 and 13 are artificially low, because I've invested in manually pruning those lengths.</text>
+    </svg>
+    <div class="bench-tooltip tooltip-box" id="dictTip"></div>
+</div>
+<p>
+    The slots and crossings in a grid can be modeled as <em>variables</em> and <em>constraints</em>, and organized into a <strong>constraint graph</strong> &ndash; this captures how each slot impacts its neighbors.
+</p>
+
+<div class="grid-figure">
+    <svg viewBox="0 0 500 135" width="500" height="135" xmlns="http://www.w3.org/2000/svg">
+        <!-- 3x3 mini grid -->
+        <rect x="30" y="20" width="38" height="38" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.5"/>
+        <rect x="68" y="20" width="38" height="38" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.5"/>
+        <rect x="106" y="20" width="38" height="38" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.5"/>
+        <rect x="30" y="58" width="38" height="38" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.5"/>
+        <rect x="68" y="58" width="38" height="38" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.5"/>
+        <rect x="106" y="58" width="38" height="38" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.5"/>
+        <rect x="30" y="96" width="38" height="38" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.5"/>
+        <rect x="68" y="96" width="38" height="38" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.5"/>
+        <rect x="106" y="96" width="38" height="38" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.5"/>
+
+        <!-- Slot A label (across, top row) -->
+        <text x="87" y="10" text-anchor="middle" font-size="11" font-weight="600" fill="var(--blue-dark)">Slot A (across)</text>
+
+        <!-- Slot B label (down, left col) — centered on the 3 cells -->
+        <text x="17" y="77" text-anchor="middle" font-size="11" font-weight="600" fill="var(--orange-dark)" transform="rotate(-90 17 77)">Slot B (down)</text>
+
+        <!-- Crossing highlight -->
+        <rect x="30" y="20" width="38" height="38" fill="none" stroke="var(--red-dark)" stroke-width="3" rx="3"/>
+        <text x="49" y="44" text-anchor="middle" font-size="11" font-weight="700" fill="var(--red-dark)">?</text>
+
+        <!-- Large right arrow between halves -->
+        <path d="M171,72 L201,72 L201,62 L225,77 L201,92 L201,82 L171,82 Z" fill="var(--silver)"/>
+
+        <!-- Variable A node -->
+        <rect x="256" y="55" width="76" height="28" rx="6" fill="var(--blue-light)" stroke="var(--blue-dark)" stroke-width="1.5"/>
+        <text x="294" y="73" text-anchor="middle" font-size="11" font-weight="600" fill="var(--blue-dark)">Variable A</text>
+
+        <!-- Variable B node -->
+        <rect x="370" y="55" width="76" height="28" rx="6" fill="var(--red-light)" stroke="var(--orange-dark)" stroke-width="1.5"/>
+        <text x="408" y="73" text-anchor="middle" font-size="11" font-weight="600" fill="var(--orange-dark)">Variable B</text>
+
+        <!-- Edge between them -->
+        <line x1="332" y1="69" x2="370" y2="69" stroke="var(--caption)" stroke-width="1.5"/>
+        <circle cx="351" cy="69" r="3" fill="var(--red-dark)"/>
+
+        <!-- Constraint label -->
+        <text x="351" y="105" text-anchor="middle" font-size="12" fill="var(--caption)">Constraint: A pos 0 = B pos 0</text>
+    </svg>
+</div>
+
+<h3>Propagating constraint updates</h3>
+
+<p>
+    If one slot's domain shrinks, we <em>propagate</em> the change to each of its graph neighbors (its crossing slots):
+</p>
+
+<ol>
+    <li>Check what letters are still possible at the crossing square.</li>
+    <li>Filter the neighbor's domain.</li>
+    <li>If it shrank, add it to the queue to propagate further.</li>
+</ol>
+
+<p>
+    This is a typical <a href="https://en.wikipedia.org/wiki/AC-3_algorithm">AC-3</a> style propagation loop; essentially Orca is a fast implementation of AC-3 with new heuristics tailored to grid filling.
+</p>
+
+<div class="grid-figure">
+    <svg viewBox="0 0 520 200" width="572" height="220" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <marker id="arrowGray" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L8,3 L0,6 Z" fill="var(--caption)"/>
+            </marker>
+        </defs>
+
+        <!-- Step 1: Domain shrinks -->
+        <rect x="10" y="40" width="110" height="50" rx="8" fill="var(--blue-light)" stroke="var(--blue-dark)" stroke-width="1.5"/>
+        <text x="65" y="60" text-anchor="middle" font-size="10" font-weight="600" fill="var(--blue-dark)">Slot A</text>
+        <text x="65" y="76" text-anchor="middle" font-size="10" fill="var(--caption)">domain shrinks</text>
+
+        <!-- Arrow 1 -->
+        <line x1="120" y1="65" x2="152" y2="65" stroke="var(--caption)" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+
+        <!-- Step 2: Compute possible letters -->
+        <rect x="155" y="30" width="120" height="70" rx="8" fill="var(--gold-bg)" stroke="var(--gold)" stroke-width="1.5"/>
+        <text x="215" y="52" text-anchor="middle" font-size="10" font-weight="600" fill="var(--gold)">At crossing</text>
+        <text x="215" y="66" text-anchor="middle" font-size="10" fill="var(--caption)">compute possible</text>
+        <text x="215" y="80" text-anchor="middle" font-size="10" fill="var(--caption)">letters: {A, E, T}</text>
+
+        <!-- Arrow 2 -->
+        <line x1="275" y1="65" x2="307" y2="65" stroke="var(--caption)" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+
+        <!-- Step 3: Filter neighbor -->
+        <rect x="310" y="40" width="110" height="50" rx="8" fill="var(--red-light)" stroke="var(--orange-dark)" stroke-width="1.5"/>
+        <text x="365" y="60" text-anchor="middle" font-size="10" font-weight="600" fill="var(--orange-dark)">Slot B</text>
+        <text x="365" y="76" text-anchor="middle" font-size="10" fill="var(--caption)">filter domain</text>
+
+        <!-- Arrow 3: if shrank, add to queue -->
+        <path d="M 420 65 C 470 65, 470 150, 365 150" fill="none" stroke="var(--caption)" stroke-width="1.5" marker-end="url(#arrowGray)"/>
+
+        <!-- Queue box -->
+        <rect x="180" y="130" width="180" height="40" rx="8" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="270" y="150" text-anchor="middle" font-size="10" font-weight="600" fill="var(--caption)">Priority queue</text>
+        <text x="270" y="163" text-anchor="middle" font-size="9" fill="var(--caption)">(smallest domains first)</text>
+
+        <!-- Arrow from queue back up -->
+        <path d="M 180 150 C 40 150, 40 90, 60 90" fill="none" stroke="var(--caption)" stroke-width="1.5" marker-end="url(#arrowGray)" stroke-dasharray="4,3"/>
+
+        <!-- Labels -->
+        <text x="440" y="55" font-size="9" fill="var(--caption)">if shrank,</text>
+        <text x="440" y="67" font-size="9" fill="var(--caption)">enqueue</text>
+        <text x="8" y="123" font-size="9" fill="var(--caption)" font-style="italic">repeat until</text>
+        <text x="8" y="135" font-size="9" fill="var(--caption)" font-style="italic">stable or empty</text>
+
+        <!-- Title -->
+        <text x="260" y="18" text-anchor="middle" font-size="11" font-weight="600" fill="var(--caption)">AC-3 propagation loop</text>
+    </svg>
+</div>
+
+<p>
+    No matter what order is followed when propagating constraints, it always will reach the same stable point where either:
+</p>
+
+<ol>
+    <li>
+        A slot has no remaining options &ndash; <em>contradiction, no solution</em>.
+    </li>
+    <li>
+        Every slot has one option &ndash; <em>solution found</em>.
+    </li>
+    <li>
+        At least one slot still has multiple options.
+    </li>
+</ol>
+
+<p>
+    However, propagation order does impact <strong>speed</strong>, because once a contradiction is found we can stop. Orca uses a priority queue to propagate slots with <em>fewest remaining options</em> first &ndash; spotting dead ends faster. In an ablation test, this was 2.5x faster than a standard <a href="https://en.wikipedia.org/wiki/FIFO_(computing_and_electronics)">FIFO</a> queue:
+</p>
+
+<table class="data">
+    <caption>Impact of propagation order on search time</caption>
+    <thead>
+        <tr>
+            <th>Queue strategy</th>
+            <th>Propagation steps</th>
+            <th>Time</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>FIFO queue</td>
+            <td>271M</td>
+            <td>12.5 min</td>
+        </tr>
+        <tr class="highlight-row">
+            <td>Priority queue &ndash; least domain</td>
+            <td>208M</td>
+            <td>5.0 min</td>
+        </tr>
+    </tbody>
+</table>
+<div class="tooltip-wrap" style="display:inline-block;">
+<p class="bench-note"><span class="grid-trigger" onmouseenter="showTooltip(event,'grid15b')" onmouseleave="hideTooltip('grid15b')">15&times;15</span> on same <span class="has-tip">hardware<span class="tip tooltip-box">macOS 26.3 &middot; M5 MacBook Air, 2026 &middot; 16 GB RAM</span></span>. Identical search trees &ndash; only propagation speed differed.</p>
+<div class="bench-tooltip tooltip-box" id="grid15b"></div>
+</div>
+<script>
+renderGridSvg('grid15b',
+    GRID_15x15, 11);
+</script>
+
+<p>Notice that propagation steps only decreased by 23% &ndash; the speed-up isn't only from fewer propagations, but also from them being cheaper on average. Slots with fewer options are less work to propagate.</p>
+
+<!-- ============================================================ -->
+<h2 id="branching">4. Solver &ndash; Branching</h2>
+
+<p>
+    When propagation stalls &ndash; without reaching a contradiction or solution &ndash; the solver needs to <em>branch</em>: it picks a cell and tries each letter in turn, propagating after each. (On a contradiction or solution, it <em>backtracks</em> to try the next letter.)
+</p>
+
+<h3>Cell-level branching</h3>
+
+<p>
+    Traditional solvers branch at the <em>slot level</em> &ndash; pick a slot and try each
+    candidate word. For an 11-letter slot with 35,000 candidates, 4000 of them might have E in position 9 &mdash; yet each independently triggers the same
+    propagation. If E leads to a dead end, the solver discovers this 4000 times.
+</p>
+
+<div class="grid-figure cc-screenshots">
+    <img src="crossword-compiler-filling-1.png" alt="Crossword Compiler at 17 minutes">
+    <img src="crossword-compiler-filling-2.png" alt="Crossword Compiler at 5 hours 36 minutes">
+</div>
+<div class="grid-figure" style="margin-top:0;">
+    <p class="caption">Crossword Compiler after 17 min and after 5 hr 36 min.
+    Full words are tried one at a time, resulting in many identical propagations. Example: PUMPKIN BEER and GOLDEN AGERS share an E in position 9, restricting the crossing slot in the same way.</p>
+</div>
+
+<p><strong>Orca branches at the cell level instead.</strong> Rather than "which word
+goes in this slot?", it asks "which letter goes in this cell?" Trying a letter at a crossing covers all words with that letter there. If it's a dead end, a single
+backtrack eliminates the entire group. This produces dramatically smaller search trees.</p>
+
+<div class="callout">
+    <strong>Clarification</strong> &mdash; <em>Propagation</em> is still at the slot level; only the "guess" that's made while branching is cell level. This initiates a propagation that originates from both crossing slots. 
+</div>
+
+<h3>What cell to branch on?</h3>
+
+<p>
+    It's critical to have a strong heuristic for choosing the next cell. Otherwise, we can skip around the grid, placing letters without zeroing in on a set of cells that produce a contradiction. 
+</p>
+
+<p>
+    In fact, with a naïve <span class="has-tip">minimum remaining values<span class="tip tooltip-box">MRV heuristic: Branch at the slot (or cell) with the fewest remaining options</span></span> (MRV) heuristic for both slot- and cell- level, slot-level was actually faster:
+</p>
+
+<div class="tooltip-wrap">
+<table class="data">
+    <caption>Slot-level vs. cell-level branching with na&iuml;ve heuristic</caption>
+    <thead>
+        <tr>
+            <th>Branching strategy</th>
+            <th><span class="has-tip">Nodes<span class="tip tooltip-box"># of times the solver branched (on either a slot or cell)</span></span></th>
+            <th><span class="has-tip">Backtracks<span class="tip tooltip-box"># of times a contradiction was reached</span></span></th>
+            <th>Time</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr class="highlight-row">
+            <td>Slot-level (MRV)</td>
+            <td>4.7M</td>
+            <td>92.2M</td>
+            <td>1h 16m</td>
+        </tr>
+        <tr>
+            <td>Cell-level (MRV)</td>
+            <td><span class="has-tip">13.6M<span class="tip tooltip-box">Cell-level has <strong>more</strong> nodes &ndash; it branches more times, because each time only sets one letter.</span></span></td>
+            <td><span class="has-tip">53.5M<span class="tip tooltip-box">Cell-level has <strong>fewer</strong> backtracks &ndash; each backtrack rules out more of the search tree.</span></span></td>
+            <td>1h 43m</td>
+        </tr>
+    </tbody>
+</table>
+<p class="bench-note">
+    <span class="grid-trigger" onmouseenter="showTooltip(event,'grid15c')" onmouseleave="hideTooltip('grid15c')">15&times;15</span> on same <span class="has-tip">hardware<span class="tip tooltip-box">macOS 26.3 &middot; M5 MacBook Air, 2026 &middot; 16 GB RAM</span></span>. Only the branching strategy differs.
+</p>
+<div class="bench-tooltip tooltip-box" id="grid15c"></div>
+</div>
+<script>
+renderGridSvg('grid15c',
+    GRID_15x15, 11);
+</script>
+
+<p>
+    Orca <strong>unlocks the structural advantage</strong> of cell-level branching with a new heuristic for cell selection, which has no natural slot-level analogue. This has two parts:
+</p>
+
+<ol>
+    <li>
+        Sum of crossing domain products &ndash; raw work estimate for a cell.
+    </li>
+    <li>
+        Length sum &ndash; combined length of the two crossing slots.
+    </li>
+</ol>
+
+<p>
+    Using these heuristics, the results are significantly better &ndash; 16x faster and 30x fewer backtracks compared to slot-level MRV.
+</p>
+
+<div class="tooltip-wrap">
+<table class="data">
+    <caption>Speed-up from Orca's heuristics for cell-level search</caption>
+    <thead>
+        <tr>
+            <th>Branching strategy</th>
+            <th><span class="has-tip">Nodes<span class="tip tooltip-box"># of times the solver branched (on either a slot or cell)</span></span></th>
+            <th><span class="has-tip">Backtracks<span class="tip tooltip-box"># of times a contradiction was reached</span></span></th>
+            <th>Time</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>Cell-level (MRV)</td>
+            <td>13.6M</td>
+            <td>53.5M</td>
+            <td>1h 43m</td>
+        </tr>
+        <tr>
+            <td>Sum of crossing domain products (SoCDP)</td>
+            <td>3.2M</td>
+            <td>14.4M</td>
+            <td>26m 19s</td>
+        </tr>
+        <tr class="highlight-row">
+            <td>SoCDP w/ length sum pre-sort</td>
+            <td>528K</td>
+            <td>3.1M</td>
+            <td>4m 40s</td>
+        </tr>
+    </tbody>
+</table>
+<p class="bench-note">
+    Same setup as above. All cell-level branching, with different heuristics.
+</p>
+</div>
+
+<h3>Orca's heuristic part 1: SoCDP</h3>
+
+<p>
+    The minimum remaining values heuristic is a very weak indicator of how constrained a given crossing is. A cell with only two possible letters could be very <em>unconstrained</em>, with hundreds of words &ndash; both across and down &ndash; that fit either letter:
+</p>
+
+<div class="grid-figure">
+    <svg viewBox="0 0 540 250" width="540" height="250" xmlns="http://www.w3.org/2000/svg">
+        <!-- ============ LEFT ============ -->
+        <!-- 3x3 mini grid (same as constraint graph diagram) -->
+        <rect x="90" y="6" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="122" y="6" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="154" y="6" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="90" y="38" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="122" y="38" width="32" height="32" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="154" y="38" width="32" height="32" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="90" y="70" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="122" y="70" width="32" height="32" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="154" y="70" width="32" height="32" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+
+        <!-- Highlight crossing cell (0,0) -->
+        <rect x="90" y="6" width="32" height="32" fill="none" stroke="var(--red-dark)" stroke-width="2.5" rx="2"/>
+
+        <!-- Viable letters in cell -->
+        <text x="98" y="27" font-size="10" font-weight="700" fill="var(--red-dark)">A S</text>
+
+        <!-- Per-letter breakdown -->
+        <text x="50" y="128" font-size="10" font-weight="600" fill="var(--caption)">If taking branch A:</text>
+        <text x="60" y="144" font-size="10" fill="var(--caption)"><tspan fill="var(--orange-dark)" font-weight="600">185</tspan> across words &times; <tspan fill="var(--orange-dark)" font-weight="600">185</tspan> down words</text>
+
+        <text x="50" y="168" font-size="10" font-weight="600" fill="var(--caption)">If taking branch S:</text>
+        <text x="60" y="184" font-size="10" fill="var(--caption)"><tspan fill="var(--orange-dark)" font-weight="600">162</tspan> across words &times; <tspan fill="var(--orange-dark)" font-weight="600">162</tspan> down words</text>
+
+        <text x="50" y="208" font-size="10" font-weight="600" fill="var(--caption)">Total crossing word pairs &rightarrow; <tspan fill="var(--orange-dark)">60469</tspan></text>
+
+        <!-- ============ RIGHT ============ -->
+        <!-- 3x3 mini grid -->
+        <rect x="360" y="6" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="392" y="6" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="424" y="6" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="360" y="38" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="392" y="38" width="32" height="32" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="424" y="38" width="32" height="32" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="360" y="70" width="32" height="32" fill="var(--bg)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="392" y="70" width="32" height="32" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+        <rect x="424" y="70" width="32" height="32" fill="var(--black)" stroke="var(--mid-gray)" stroke-width="1.2"/>
+
+        <!-- Highlight crossing cell (0,0) -->
+        <rect x="360" y="6" width="32" height="32" fill="none" stroke="var(--green-dark)" stroke-width="2.5" rx="2"/>
+
+        <!-- Viable letters in cell -->
+        <text x="365" y="27" font-size="9" font-weight="700" fill="var(--green-dark)">J Q Z</text>
+
+        <!-- Per-letter breakdown -->
+        <text x="320" y="128" font-size="10" font-weight="600" fill="var(--caption)">If taking branch J:</text>
+        <text x="330" y="144" font-size="10" fill="var(--caption)"><tspan fill="var(--green-dark)" font-weight="600">60</tspan> across words &times; <tspan fill="var(--green-dark)" font-weight="600">60</tspan> down words</text>
+
+        <text x="320" y="168" font-size="10" font-weight="600" fill="var(--caption)">If taking branch Q:</text>
+        <text x="330" y="184" font-size="10" fill="var(--caption)"><tspan fill="var(--green-dark)" font-weight="600">23</tspan> across words &times; <tspan fill="var(--green-dark)" font-weight="600">23</tspan> down words</text>
+
+        <text x="320" y="208" font-size="10" font-weight="600" fill="var(--caption)">If taking branch Z:</text>
+        <text x="330" y="224" font-size="10" fill="var(--caption)"><tspan fill="var(--green-dark)" font-weight="600">31</tspan> across words &times; <tspan fill="var(--green-dark)" font-weight="600">31</tspan> down words</text>
+
+        <text x="320" y="248" font-size="10" font-weight="600" fill="var(--caption)">Total crossing word pairs &rightarrow; <tspan fill="var(--green-dark)">5090</tspan></text>
+
+        <!-- Divider -->
+        <line x1="265" y1="0" x2="265" y2="250" stroke="var(--border)" stroke-width="1" stroke-dasharray="5,4"/>
+    </svg>
+</div>
+
+<p>
+    Orca uses a new heuristic instead: sum of crossing domain products (SoCDP):
+</p>
+
+<div class="formula">
+    <span class="formula-sigma"><span class="sigma">&Sigma;</span><span class="fn">l &isin; viable</span></span>
+    &nbsp;<span class="fn">count</span><sub>A</sub><span class="fn">(l)</span>
+    &nbsp;&times;&nbsp;
+    <span class="fn">count</span><sub>D</sub><span class="fn">(l)</span>
+</div>
+
+<p>
+    Where <em>count<sub>A</sub>(l)</em> and <em>count<sub>D</sub>(l)</em> are counts of the remaining <em>Across</em> and <em>Down</em> words with letter <em>l</em> at the crossing position. SoCDP estimates the <strong>total work</strong> across all branches &ndash; Orca branches on the cell with the lowest sum.
+</p>
+
+<h3>Orca's heuristic part 2: Static sort window</h3>
+
+<p>
+    Using SoCDP alone has a tendency to favor short crossings, which locally have low work estimates. However, this can scatter constraints around the grid, leading to larger search trees in the long run.
+</p>
+
+<p>
+    For this reason, Orca pre-sorts grid cells in descending order by <em>length sum</em> &ndash; the total length of the two slots that cross at that cell. When selecting a branching cell, Orca only considers the first <em>k</em> (currently 15) unassigned cells in this order.
+</p>
+
+<div class="scan-grid-wrap">
+<div>
+<div class="grid-figure" id="crossing-scan-grid">
+<div class="grid-toggle-wrap"><button class="grid-toggle-btn" onclick="toggleSortView(this)">Show initial scan window</button></div>
+<table>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="fill" data-score="17">17</td><td class="black"></td><td class="black"></td><td class="black"></td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="fill" data-score="18">18</td><td class="fill" data-score="18">18</td><td class="black"></td><td class="black"></td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="fill" data-score="19">19</td><td class="fill" data-score="19">19</td><td class="fill" data-score="19">19</td><td class="black"></td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="black"></td><td class="fill" data-score="15">15</td><td class="fill" data-score="15">15</td><td class="fill" data-score="15">15</td><td class="fill" data-score="15">15</td><td class="black"></td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="black"></td><td class="fill" data-score="16">16</td><td class="fill" data-score="16">16</td><td class="fill" data-score="16">16</td><td class="fill" data-score="16">16</td><td class="fill" data-score="16">16</td><td class="black"></td><td class="black"></td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="black"></td><td class="fill" data-score="16">16</td><td class="fill" data-score="22" data-rank="1">22</td><td class="fill" data-score="22" data-rank="2">22</td><td class="fill" data-score="22" data-rank="3">22</td><td class="fill" data-score="22" data-rank="4">22</td><td class="fill" data-score="22" data-rank="5">22</td><td class="fill" data-score="16">16</td><td class="fill" data-score="15">15</td><td class="fill" data-score="19">19</td><td class="fill" data-score="18">18</td><td class="fill" data-score="17">17</td></tr>
+<tr><td class="black"></td><td class="black"></td><td class="black"></td><td class="fill" data-score="15">15</td><td class="fill" data-score="16">16</td><td class="fill" data-score="22" data-rank="6">22</td><td class="fill" data-score="22" data-rank="7">22</td><td class="fill" data-score="22" data-rank="8">22</td><td class="fill" data-score="22" data-rank="9">22</td><td class="fill" data-score="22" data-rank="10">22</td><td class="fill" data-score="16">16</td><td class="fill" data-score="15">15</td><td class="fill" data-score="19">19</td><td class="fill" data-score="18">18</td><td class="black"></td></tr>
+<tr><td class="black"></td><td class="black"></td><td class="fill" data-score="19">19</td><td class="fill" data-score="15">15</td><td class="fill" data-score="16">16</td><td class="fill" data-score="22" data-rank="11">22</td><td class="letter">O</td><td class="letter">N</td><td class="letter">D</td><td class="letter">A</td><td class="fill" data-score="16">16</td><td class="fill" data-score="15">15</td><td class="fill" data-score="19">19</td><td class="black"></td><td class="black"></td></tr>
+<tr><td class="black"></td><td class="fill" data-score="18">18</td><td class="fill" data-score="19">19</td><td class="fill" data-score="15">15</td><td class="fill" data-score="16">16</td><td class="fill" data-score="22" data-rank="12">22</td><td class="fill" data-score="22" data-rank="13">22</td><td class="fill" data-score="22" data-rank="14">22</td><td class="fill" data-score="22" data-rank="15">22</td><td class="fill" data-score="22">22</td><td class="fill" data-score="16">16</td><td class="fill" data-score="15">15</td><td class="black"></td><td class="black"></td><td class="black"></td></tr>
+<tr><td class="fill" data-score="17">17</td><td class="fill" data-score="18">18</td><td class="fill" data-score="19">19</td><td class="fill" data-score="15">15</td><td class="fill" data-score="16">16</td><td class="fill" data-score="22">22</td><td class="fill" data-score="22">22</td><td class="fill" data-score="22">22</td><td class="fill" data-score="22">22</td><td class="fill" data-score="22">22</td><td class="fill" data-score="16">16</td><td class="black"></td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="black"></td><td class="black"></td><td class="fill" data-score="16">16</td><td class="fill" data-score="16">16</td><td class="fill" data-score="16">16</td><td class="fill" data-score="16">16</td><td class="fill" data-score="16">16</td><td class="black"></td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="black"></td><td class="fill" data-score="15">15</td><td class="fill" data-score="15">15</td><td class="fill" data-score="15">15</td><td class="fill" data-score="15">15</td><td class="black"></td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="black"></td><td class="fill" data-score="19">19</td><td class="fill" data-score="19">19</td><td class="fill" data-score="19">19</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="black"></td><td class="black"></td><td class="fill" data-score="18">18</td><td class="fill" data-score="18">18</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+<tr><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="black"></td><td class="black"></td><td class="black"></td><td class="fill" data-score="17">17</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td><td class="wild">*</td></tr>
+</table>
+<p class="caption caption-center" style="margin-bottom:0;">
+    Branching initially focuses on the central area, where 11-letter slots intersect.
+    <br>
+    As more letters are inserted, further away cells can enter the window.
+</p>
+</div>
+
+</div>
+</div>
+
+<p>
+    This static sort window constrains the solver to <strong>focus on the longest slot crossings early in the search</strong>. The window size <em>k</em> controls how many cells (ordered by greatest length sum) are evaluated per branching decision.
+</p>
+
+<div class="grid-figure tooltip-wrap">
+    <p style="text-align:center; font-family:var(--sans); font-size:13px; font-weight:700; color:var(--text); margin:0 0 -24px;"><span class="has-tip">Static sort window<span class="tip tooltip-box">In descending order by combined length of crossing slots</span></span> vs. <span class="has-tip">search nodes<span class="tip tooltip-box"># of times the solver branched (on either a slot or cell)</span></span></p>
+    <svg id="scan-chart" viewBox="0 0 700 370" width="700" height="370" xmlns="http://www.w3.org/2000/svg" style="overflow: visible;">
+
+        <!-- Y axis title -->
+        <text x="-2" y="185" text-anchor="middle" font-size="12" fill="var(--caption)" transform="rotate(-90 -2 175)">Search nodes</text>
+
+        <!-- Chart area: x=50..650, y=40..310;  "all" at x=650 -->
+        <!-- Y axis: 0 to 5M -->
+        <line x1="50" y1="40" x2="50" y2="310" stroke="var(--border)" stroke-width="1"/>
+        <!-- 0 -->
+        <text x="42" y="314" text-anchor="end" font-size="11" fill="var(--caption)">0</text>
+        <line x1="47" y1="310" x2="50" y2="310" stroke="var(--caption)" stroke-width="1"/>
+        <!-- 1M -->
+        <text x="42" y="260" text-anchor="end" font-size="11" fill="var(--caption)">1M</text>
+        <line x1="47" y1="256" x2="50" y2="256" stroke="var(--caption)" stroke-width="1"/>
+        <line x1="50" y1="256" x2="650" y2="256" stroke="var(--muted-bg)" stroke-width="0.5"/>
+        <!-- 2M -->
+        <text x="42" y="206" text-anchor="end" font-size="11" fill="var(--caption)">2M</text>
+        <line x1="47" y1="202" x2="50" y2="202" stroke="var(--caption)" stroke-width="1"/>
+        <line x1="50" y1="202" x2="650" y2="202" stroke="var(--muted-bg)" stroke-width="0.5"/>
+        <!-- 3M -->
+        <text x="42" y="152" text-anchor="end" font-size="11" fill="var(--caption)">3M</text>
+        <line x1="47" y1="148" x2="50" y2="148" stroke="var(--caption)" stroke-width="1"/>
+        <line x1="50" y1="148" x2="650" y2="148" stroke="var(--muted-bg)" stroke-width="0.5"/>
+        <!-- 4M -->
+        <text x="42" y="98" text-anchor="end" font-size="11" fill="var(--caption)">4M</text>
+        <line x1="47" y1="94" x2="50" y2="94" stroke="var(--caption)" stroke-width="1"/>
+        <line x1="50" y1="94" x2="650" y2="94" stroke="var(--muted-bg)" stroke-width="0.5"/>
+        <!-- 5M -->
+        <text x="42" y="44" text-anchor="end" font-size="11" fill="var(--caption)">5M</text>
+        <line x1="47" y1="40" x2="50" y2="40" stroke="var(--caption)" stroke-width="1"/>
+        <line x1="50" y1="40" x2="650" y2="40" stroke="var(--muted-bg)" stroke-width="0.5"/>
+
+        <!-- X axis -->
+        <line x1="50" y1="310" x2="650" y2="310" stroke="var(--border)" stroke-width="1"/>
+        <!-- X scale: linear x(L) = 50 + (L-1)*11.84 for L=1..50; "all" at x=650
+             1→50  5→97  10→157  15→216  20→275  25→334  30→393  40→512  45→571  50→630  all→650
+             Y scale: y(n) = 310 - n * 0.000054  (0→310, 5M→40) -->
+        <text x="50" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">1</text>
+        <text x="97" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">5</text>
+        <text x="157" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">10</text>
+        <text x="216" y="326" text-anchor="middle" font-size="11" fill="var(--green-dark)" font-weight="600">15</text>
+        <text x="275" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">20</text>
+        <text x="334" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">25</text>
+        <text x="393" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">30</text>
+        <text x="512" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">40</text>
+        <text x="571" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">45</text>
+        <text x="630" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">50</text>
+        <text x="650" y="326" text-anchor="middle" font-size="11" fill="var(--caption)">all</text>
+        <text x="350" y="350" text-anchor="middle" font-size="12" fill="var(--caption)">Crossings evaluated per branch</text>
+
+        <!-- 15x15 data (nodes): 1/1492982 2/1272358 3/1140562 4/1061493 5/880637 6/798418 7/764988 8/609026 9/599447 10/605805 11/570702 12/575599 13/600714 14/521872 15/527676 16/548874 17/828775 18/959369 19/1001797 20/1027256 25/2679629 30/3553348 35/4851230 40/3009336 45/3825853 50/3154855 all/3154855
+             7x7 data (nodes):   1/3993617 2/3353642 3/3113367 4/2891257 5/2712677 6/2436757 7/2312115 8/2217557 9/2150637 10/2046096 11/1978163 12/2038540 13/1939518 14/1928789 15/1911806 16/1945741 17/2010012 18/2007386 19/1989849 20/2012475 25/1993373 30/1910047 35/1901062 40/1895589 45/1895558 50/1895558 all/1895558 -->
+
+        <!-- 15x15 line (blue) -->
+        <polyline fill="none" stroke="var(--blue-dark)" stroke-width="2" stroke-linejoin="round"
+            points="50,229 62,241 74,248 86,253 97,262 109,267 121,269 133,277 145,278 157,277 168,279 180,279 192,278 204,282 216,282 228,280 239,265 251,258 263,256 275,255 334,165 393,118 453,48 512,148 571,103 630,140 650,140"/>
+        <circle cx="50" cy="229" r="3" fill="var(--blue-dark)"/>
+        <circle cx="62" cy="241" r="3" fill="var(--blue-dark)"/>
+        <circle cx="74" cy="248" r="3" fill="var(--blue-dark)"/>
+        <circle cx="86" cy="253" r="3" fill="var(--blue-dark)"/>
+        <circle cx="97" cy="262" r="3" fill="var(--blue-dark)"/>
+        <circle cx="109" cy="267" r="3" fill="var(--blue-dark)"/>
+        <circle cx="121" cy="269" r="3" fill="var(--blue-dark)"/>
+        <circle cx="133" cy="277" r="3" fill="var(--blue-dark)"/>
+        <circle cx="145" cy="278" r="3" fill="var(--blue-dark)"/>
+        <circle cx="157" cy="277" r="3" fill="var(--blue-dark)"/>
+        <circle cx="168" cy="279" r="3" fill="var(--blue-dark)"/>
+        <circle cx="180" cy="279" r="3" fill="var(--blue-dark)"/>
+        <circle cx="192" cy="278" r="3" fill="var(--blue-dark)"/>
+        <circle cx="204" cy="282" r="3" fill="var(--blue-dark)"/>
+        <circle cx="216" cy="282" r="4.5" fill="var(--blue-dark)" stroke="var(--bg)" stroke-width="1.5"/>
+        <circle cx="228" cy="280" r="3" fill="var(--blue-dark)"/>
+        <circle cx="239" cy="265" r="3" fill="var(--blue-dark)"/>
+        <circle cx="251" cy="258" r="3" fill="var(--blue-dark)"/>
+        <circle cx="263" cy="256" r="3" fill="var(--blue-dark)"/>
+        <circle cx="275" cy="255" r="3" fill="var(--blue-dark)"/>
+        <circle cx="334" cy="165" r="3" fill="var(--blue-dark)"/>
+        <circle cx="393" cy="118" r="3" fill="var(--blue-dark)"/>
+        <circle cx="453" cy="48" r="3" fill="var(--blue-dark)"/>
+        <circle cx="512" cy="148" r="3" fill="var(--blue-dark)"/>
+        <circle cx="571" cy="103" r="3" fill="var(--blue-dark)"/>
+        <circle cx="630" cy="140" r="3" fill="var(--blue-dark)"/>
+        <circle cx="650" cy="140" r="3" fill="var(--blue-dark)"/>
+
+        <!-- 7x7 line (orange) -->
+        <polyline fill="none" stroke="var(--orange-dark)" stroke-width="2" stroke-linejoin="round"
+            points="50,94 62,129 74,142 86,154 97,164 109,178 121,185 133,190 145,194 157,200 168,203 180,200 192,205 204,206 216,207 228,205 239,202 251,202 263,203 275,201 334,202 393,207 453,207 512,208 571,208 630,208 650,208"/>
+        <circle cx="50" cy="94" r="3" fill="var(--orange-dark)"/>
+        <circle cx="62" cy="129" r="3" fill="var(--orange-dark)"/>
+        <circle cx="74" cy="142" r="3" fill="var(--orange-dark)"/>
+        <circle cx="86" cy="154" r="3" fill="var(--orange-dark)"/>
+        <circle cx="97" cy="164" r="3" fill="var(--orange-dark)"/>
+        <circle cx="109" cy="178" r="3" fill="var(--orange-dark)"/>
+        <circle cx="121" cy="185" r="3" fill="var(--orange-dark)"/>
+        <circle cx="133" cy="190" r="3" fill="var(--orange-dark)"/>
+        <circle cx="145" cy="194" r="3" fill="var(--orange-dark)"/>
+        <circle cx="157" cy="200" r="3" fill="var(--orange-dark)"/>
+        <circle cx="168" cy="203" r="3" fill="var(--orange-dark)"/>
+        <circle cx="180" cy="200" r="3" fill="var(--orange-dark)"/>
+        <circle cx="192" cy="205" r="3" fill="var(--orange-dark)"/>
+        <circle cx="204" cy="206" r="3" fill="var(--orange-dark)"/>
+        <circle cx="216" cy="207" r="4.5" fill="var(--orange-dark)" stroke="var(--bg)" stroke-width="1.5"/>
+        <circle cx="228" cy="205" r="3" fill="var(--orange-dark)"/>
+        <circle cx="239" cy="202" r="3" fill="var(--orange-dark)"/>
+        <circle cx="251" cy="202" r="3" fill="var(--orange-dark)"/>
+        <circle cx="263" cy="203" r="3" fill="var(--orange-dark)"/>
+        <circle cx="275" cy="201" r="3" fill="var(--orange-dark)"/>
+        <circle cx="334" cy="202" r="3" fill="var(--orange-dark)"/>
+        <circle cx="393" cy="207" r="3" fill="var(--orange-dark)"/>
+        <circle cx="453" cy="207" r="3" fill="var(--orange-dark)"/>
+        <circle cx="512" cy="208" r="3" fill="var(--orange-dark)"/>
+        <circle cx="571" cy="208" r="3" fill="var(--orange-dark)"/>
+        <circle cx="630" cy="208" r="3" fill="var(--orange-dark)"/>
+        <circle cx="650" cy="208" r="3" fill="var(--orange-dark)"/>
+
+        <!-- Optimal marker at limit=15 -->
+        <line x1="216" y1="43" x2="216" y2="310" stroke="var(--green-dark)" stroke-width="1" stroke-dasharray="4,3" opacity="0.5"/>
+        <text x="222" y="53" font-size="11" font-weight="600" fill="var(--green-dark)">k=15</text>
+
+        <!-- Labels on lines -->
+        <text x="62" y="80" font-size="15" font-weight="600" fill="var(--orange-dark)" class="grid-trigger" style="text-decoration-color:var(--orange-underline);" onmouseenter="showTooltip(event,'grid7s')" onmouseleave="hideTooltip('grid7s')">7&times;7</text>
+        <text x="62" y="222" font-size="15" font-weight="600" fill="var(--blue-dark)" class="grid-trigger" style="text-decoration-color:var(--blue-underline);" onmouseenter="showTooltip(event,'grid15s')" onmouseleave="hideTooltip('grid15s')">15&times;15</text>
+    </svg>
+<div class="bench-tooltip tooltip-box" id="grid7s"></div>
+<div class="bench-tooltip tooltip-box" id="grid15s"></div>
+<div class="bench-tooltip tooltip-box" id="scanDotTip"></div>
+</div>
+<script>
+renderGridSvg('grid7s',
+    GRID_7x7, 16);
+renderGridSvg('grid15s',
+    GRID_15x15, 11);
+
+// Dot hover tooltips for scan limit chart
+(function() {
+    var nodes15 = {50:1492982,62:1272358,74:1140562,86:1061493,97:880637,109:798418,121:764988,133:609026,145:599447,157:605805,168:570702,180:575599,192:600714,204:521872,216:527676,228:548874,239:828775,251:959369,263:1001797,275:1027256,334:2679629,393:3553348,453:4851230,512:3009336,571:3825853,630:3154855,650:3154855};
+    var nodes7 = {50:3993617,62:3353642,74:3113367,86:2891257,97:2712677,109:2436757,121:2312115,133:2217557,145:2150637,157:2046096,168:1978163,180:2038540,192:1939518,204:1928789,216:1911806,228:1945741,239:2010012,251:2007386,263:1989849,275:2012475,334:1993373,393:1910047,453:1901062,512:1895589,571:1895558,630:1895558,650:1895558};
+    var cxToK = {50:1,62:2,74:3,86:4,97:5,109:6,121:7,133:8,145:9,157:10,168:11,180:12,192:13,204:14,216:15,228:16,239:17,251:18,263:19,275:20,334:25,393:30,453:35,512:40,571:45,630:50,650:'all'};
+    var tip = document.getElementById('scanDotTip');
+    var svg = document.getElementById('scan-chart');
+    var wrap = svg.closest('div');
+    svg.querySelectorAll('circle').forEach(function(c) {
+        var cx = Math.round(parseFloat(c.getAttribute('cx')));
+        var k = cxToK[cx];
+        if (!k) return;
+        var is15 = c.getAttribute('fill') === 'var(--blue-dark)';
+        var n = is15 ? nodes15[cx] : nodes7[cx];
+        if (!n) return;
+        var origR = c.getAttribute('r');
+        c.style.cursor = 'pointer';
+        c.addEventListener('mouseenter', function() {
+            c.setAttribute('r', parseFloat(origR) + 1.5);
+            tip.innerHTML = '<strong>k\u2009=\u2009' + k + '</strong>\u2003' + n.toLocaleString() + ' nodes';
+            tip.classList.add('visible');
+            var cRect = c.getBoundingClientRect();
+            var wRect = wrap.getBoundingClientRect();
+            tip.style.left = (cRect.left + cRect.width/2 - wRect.left - tip.offsetWidth/2) + 'px';
+            tip.style.top = (cRect.top - wRect.top - tip.offsetHeight - 8) + 'px';
+        });
+        c.addEventListener('mouseleave', function() {
+            c.setAttribute('r', origR);
+            if (!lastEventWasTouch) tip.classList.remove('visible');
+        });
+    });
+})();
+</script>
+
+<p>
+    On the 7&times;7, all crossings have <em>length sum = 14</em>, so the "static sort" is just an arbitrary fixed order. On the 15&times;15 the effect is significant, with an ideal region between <em>k=8</em> and <em>k=16</em>.
+</p>
+
+<div class="callout">
+    <strong>Optimality</strong> &mdash; Other heuristics were tested, including hybrids of SoCDP and length sum, as well as other grids. The <strong>best heuristic is very grid dependent</strong>, but the one described here was quite robust, so it's Orca's choice for now.
+</div>
+
+<h3>Solution path animation</h3>
+
+<p>
+    How many explicit decisions does the solver make to fill a grid? Remarkably few. On the final successful path to one 15&times;15 solution, the solver makes
+    just 12 branching decisions and propagation fills in
+    the remaining cells. Click &ldquo;Play&rdquo; to watch this unfold &mdash;
+    <span class="legend-swatch" style="background:var(--red);"></span>&nbsp;red
+    cells are explicit branching decisions,
+    <span class="legend-swatch" style="background:var(--green);"></span>&nbsp;green
+    cells are constraint propagations.
+</p>
+
+<div class="anim-wrap">
+<div class="anim-controls">
+    <button class="grid-toggle-btn" onclick="playAnim('anim15')">&#9654; Play</button>
+    <button class="grid-toggle-btn" onclick="resetAnim('anim15')">Reset</button>
+</div>
+<div class="grid-figure fill-anim" id="anim15" style="margin:4px 0;">
+<table></table>
+</div>
+</div>
+
+<script>
+var animData = { anim15: renderAnimGrid('anim15',
+    '*****H###******\n' +
+    '*****AT##******\n' +
+    '*****LES#******\n' +
+    '****#OLES#*****\n' +
+    '****#GETTO##***\n' +
+    '***#HESTARTEDIT\n' +
+    '###CINCINNATUS#\n' +
+    '##CARBondaTES##\n' +
+    '#MAKEUPGAMES###\n' +
+    'POWERLIFTER#***\n' +
+    '***##BUREN#****\n' +
+    '*****#MEAT#****\n' +
+    '******#ESI*****\n' +
+    '******##EN*****\n' +
+    '******###G*****',
+    'a15', [[7,5],[8,8],[5,8],[6,8],[6,5],[9,8],[9,5],[4,5],[8,5],[8,9],[5,4],[7,12]])
+};
+</script>
+
+<p>
+    The final branching choice &ndash; which places an <em>S</em> &ndash; is only to distinguish between <em>CARBON DATES</em> and <em>CARBON DATED</em>. Slot-level branching would have separately explored both of those as wholly independent subtrees.
+</p>
+
+<!-- ============================================================ -->
+<h2 id="optimizations">5. Making It Fast</h2>
+
+<p>
+    The algorithmic steps aren't complex, but Orca executes them millions of times, so the low-level details matter. This section explains how Orca is optimized to run fast.
+</p>
+
+<div class="grid-figure">
+    <svg viewBox="0 0 440 320" width="440" height="320" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <marker id="arrowFlow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L8,3 L0,6 Z" fill="var(--caption)"/>
+            </marker>
+            <marker id="arrowBlue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L8,3 L0,6 Z" fill="var(--blue-dark)"/>
+            </marker>
+            <marker id="arrowRed" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L8,3 L0,6 Z" fill="var(--red-dark)"/>
+            </marker>
+            <marker id="arrowGold" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L8,3 L0,6 Z" fill="var(--gold)"/>
+            </marker>
+            <marker id="arrowGreen" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L8,3 L0,6 Z" fill="var(--green-dark)"/>
+            </marker>
+        </defs>
+
+        <!-- 1. Propagate -->
+        <rect x="150" y="10" width="160" height="36" rx="8" fill="var(--blue-light)" stroke="var(--blue-dark)" stroke-width="1.5"/>
+        <text x="230" y="33" text-anchor="middle" font-size="13" font-weight="600" fill="var(--blue-dark)">Propagate (AC-3)</text>
+
+        <!-- Arrow down -->
+        <line x1="230" y1="46" x2="230" y2="66" stroke="var(--caption)" stroke-width="1.5" marker-end="url(#arrowFlow)"/>
+
+        <!-- 2. Contradiction diamond -->
+        <polygon points="230,70 290,95 230,120 170,95" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="230" y="99" text-anchor="middle" font-size="11" fill="var(--caption)">contradiction?</text>
+
+        <!-- Yes: backtrack left -->
+        <line x1="170" y1="95" x2="100" y2="95" stroke="var(--red-dark)" stroke-width="1.5" marker-end="url(#arrowRed)"/>
+        <text x="135" y="88" text-anchor="middle" font-size="10" fill="var(--red-dark)">yes</text>
+        <rect x="40" y="82" width="58" height="26" rx="6" fill="var(--red-light)" stroke="var(--red-dark)" stroke-width="1.2"/>
+        <text x="69" y="99" text-anchor="middle" font-size="11" font-weight="600" fill="var(--red-dark)">back&shy;track</text>
+
+        <!-- No: down -->
+        <line x1="230" y1="120" x2="230" y2="140" stroke="var(--caption)" stroke-width="1.5" marker-end="url(#arrowFlow)"/>
+        <text x="240" y="135" font-size="10" fill="var(--caption)">no</text>
+
+        <!-- 3. All filled diamond -->
+        <polygon points="230,144 300,169 230,194 160,169" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="230" y="173" text-anchor="middle" font-size="11" fill="var(--caption)">all slots filled?</text>
+
+        <!-- Yes: emit left -->
+        <line x1="160" y1="169" x2="100" y2="169" stroke="var(--gold)" stroke-width="1.5" marker-end="url(#arrowGold)"/>
+        <text x="131" y="162" text-anchor="middle" font-size="10" fill="var(--gold)">yes</text>
+        <rect x="12" y="152" width="86" height="34" rx="6" fill="var(--gold-bg)" stroke="var(--gold)" stroke-width="1.2"/>
+        <text x="55" y="167" text-anchor="middle" font-size="10" font-weight="600" fill="var(--gold)">validate &amp;</text>
+        <text x="55" y="180" text-anchor="middle" font-size="10" font-weight="600" fill="var(--gold)">emit solution</text>
+
+        <!-- No: down -->
+        <line x1="230" y1="194" x2="230" y2="214" stroke="var(--caption)" stroke-width="1.5" marker-end="url(#arrowFlow)"/>
+        <text x="240" y="209" font-size="10" fill="var(--caption)">no</text>
+
+        <!-- 4. Select branch cell -->
+        <rect x="140" y="218" width="180" height="36" rx="8" fill="var(--green-light)" stroke="var(--green-dark)" stroke-width="1.5"/>
+        <text x="230" y="235" text-anchor="middle" font-size="11" font-weight="600" fill="var(--green-dark)">Select branch cell</text>
+        <text x="230" y="248" text-anchor="middle" font-size="11" fill="var(--caption)">SoCDP, top 15 by length-sum</text>
+
+        <!-- Arrow down -->
+        <line x1="230" y1="254" x2="230" y2="274" stroke="var(--caption)" stroke-width="1.5" marker-end="url(#arrowFlow)"/>
+
+        <!-- 5. For each letter, restrict & recurse -->
+        <rect x="130" y="278" width="200" height="36" rx="8" fill="var(--blue-light)" stroke="var(--blue-dark)" stroke-width="1.5"/>
+        <text x="230" y="295" text-anchor="middle" font-size="11" font-weight="600" fill="var(--blue-dark)">For each viable letter:</text>
+        <text x="230" y="308" text-anchor="middle" font-size="11" fill="var(--caption)">save state &amp; restrict cell</text>
+
+        <!-- Loop arrow: back to Propagate -->
+        <path d="M 330 296 C 390 296, 410 200, 410 50 C 410 20, 380 16, 312 24" fill="none" stroke="var(--blue-dark)" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#arrowBlue)"/>
+        <text x="418" y="160" font-size="11" fill="var(--blue-dark)" transform="rotate(90 418 160)">loop</text>
+    </svg>
+</div>
+
+<h3>Propagation</h3>
+
+<p>
+    <strong>What needs to happen.</strong>
+    After guessing a letter at a cell, Orca needs to remove every
+    dictionary word that's ruled out from all affected slots &mdash; and keep
+    going until stable. This accounts for over 90% of the solver&rsquo;s runtime.
+</p>
+
+<p>
+    <strong>How we make it fast.</strong>
+    It starts with the data representation. Each slot&rsquo;s domain is
+    a bitset &ndash; one bit per dictionary word of that
+    length. In addition, a pre-indexed lookup table returns a bitset for
+    &ldquo;which words have this letter at this position.&rdquo; Restricting a
+    domain is a single bitwise AND of two ~4.2&thinsp;KB blocks.
+    In optimized builds, these compile to wide vector instructions (<em>NEON</em> on ARM, <em>AVX</em> on x86) that process hundreds of bits per instruction.
+</p>
+
+<div class="grid-figure">
+    <svg viewBox="0 0 300 185" width="300" height="185" xmlns="http://www.w3.org/2000/svg" style="font-family: 'SF Mono', 'Fira Code', Consolas, monospace;">
+        <!-- Domain bitset -->
+        <text x="12" y="24" font-size="12" font-family="'Helvetica Neue', sans-serif" font-weight="600" fill="var(--caption)">Domain (5 candidates):</text>
+        <g transform="translate(12, 37)">
+            <rect x="0" y="0" width="22" height="22" rx="2" fill="var(--blue-light)" stroke="var(--border)" stroke-width="1"/><text x="11" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="25" y="0" width="22" height="22" rx="2" fill="var(--blue-light)" stroke="var(--border)" stroke-width="1"/><text x="36" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="50" y="0" width="22" height="22" rx="2" fill="var(--blue-dark)"/><text x="61" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+            <rect x="75" y="0" width="22" height="22" rx="2" fill="var(--blue-light)" stroke="var(--border)" stroke-width="1"/><text x="86" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="100" y="0" width="22" height="22" rx="2" fill="var(--blue-light)" stroke="var(--border)" stroke-width="1"/><text x="111" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="125" y="0" width="22" height="22" rx="2" fill="var(--blue-dark)"/><text x="136" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+            <rect x="150" y="0" width="22" height="22" rx="2" fill="var(--blue-light)" stroke="var(--border)" stroke-width="1"/><text x="161" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="175" y="0" width="22" height="22" rx="2" fill="var(--blue-dark)"/><text x="186" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+            <text x="203" y="16" font-size="15" fill="var(--caption)">···</text>
+            <rect x="228" y="0" width="22" height="22" rx="2" fill="var(--blue-dark)"/><text x="239" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+            <rect x="253" y="0" width="22" height="22" rx="2" fill="var(--blue-dark)"/><text x="264" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+        </g>
+
+        <!-- Filter bitset -->
+        <text x="12" y="86" font-size="12" font-family="'Helvetica Neue', sans-serif" font-weight="600" fill="var(--caption)">&ldquo;B at position 3&rdquo; filter:</text>
+        <g transform="translate(12, 98)">
+            <rect x="0" y="0" width="22" height="22" rx="2" fill="var(--red-light)" stroke="var(--border)" stroke-width="1"/><text x="11" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="25" y="0" width="22" height="22" rx="2" fill="var(--red-light)" stroke="var(--border)" stroke-width="1"/><text x="36" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="50" y="0" width="22" height="22" rx="2" fill="var(--orange-dark)"/><text x="61" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+            <rect x="75" y="0" width="22" height="22" rx="2" fill="var(--red-light)" stroke="var(--border)" stroke-width="1"/><text x="86" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="100" y="0" width="22" height="22" rx="2" fill="var(--orange-dark)"/><text x="111" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+            <rect x="125" y="0" width="22" height="22" rx="2" fill="var(--orange-dark)"/><text x="136" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+            <rect x="150" y="0" width="22" height="22" rx="2" fill="var(--red-light)" stroke="var(--border)" stroke-width="1"/><text x="161" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="175" y="0" width="22" height="22" rx="2" fill="var(--red-light)" stroke="var(--border)" stroke-width="1"/><text x="186" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <text x="203" y="16" font-size="15" fill="var(--caption)">···</text>
+            <rect x="228" y="0" width="22" height="22" rx="2" fill="var(--red-light)" stroke="var(--border)" stroke-width="1"/><text x="239" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="253" y="0" width="22" height="22" rx="2" fill="var(--orange-dark)"/><text x="264" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+        </g>
+
+        <!-- Result -->
+        <text x="12" y="147" font-size="12" font-family="'Helvetica Neue', sans-serif" font-weight="600" fill="var(--caption)">Result (3 candidates):</text>
+        <g transform="translate(12, 159)">
+            <rect x="0" y="0" width="22" height="22" rx="2" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1"/><text x="11" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="25" y="0" width="22" height="22" rx="2" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1"/><text x="36" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="50" y="0" width="22" height="22" rx="2" fill="var(--green-dark)"/><text x="61" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+            <rect x="75" y="0" width="22" height="22" rx="2" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1"/><text x="86" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="100" y="0" width="22" height="22" rx="2" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1"/><text x="111" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="125" y="0" width="22" height="22" rx="2" fill="var(--green-dark)"/><text x="136" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+            <rect x="150" y="0" width="22" height="22" rx="2" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1"/><text x="161" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="175" y="0" width="22" height="22" rx="2" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1"/><text x="186" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <text x="203" y="16" font-size="15" fill="var(--caption)">···</text>
+            <rect x="228" y="0" width="22" height="22" rx="2" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1"/><text x="239" y="16" text-anchor="middle" font-size="11" fill="var(--silver)">0</text>
+            <rect x="253" y="0" width="22" height="22" rx="2" fill="var(--green-dark)"/><text x="264" y="16" text-anchor="middle" font-size="11" fill="var(--bg)">1</text>
+        </g>
+    </svg>
+    <p class="caption">
+        An example of using bitsets to filter a domain.
+    </p>
+</div>
+
+<p>
+    Several additional techniques further speed up the propagation loop:
+</p>
+
+<ul>
+
+<li>
+    <strong>Small domain carve-out.</strong> For small domains (under 2,000 words),
+    it scans words directly. The solver uses bitset intersections for large domains only.
+</li>
+
+<li>
+    <strong>Skipping redundant work.</strong> If slots A and B cross, we have two <em>arcs</em>: A→B ("filter B based on A's letters") and B→A ("filter A based on B's letters"). A per-arc cache records what letters were possible last time; if nothing changed, skip.
+</li>
+
+<li>
+    <strong>Subset before intersection.</strong>
+    Even after building the filter, a read-only subset check determines whether
+    the intersection would actually shrink the domain. If not, skip &mdash;
+    avoiding the cost of writing back updated blocks and recounting the domain
+    size.
+</li>
+</ul>
+
+<p>
+    Together, these avoid the vast majority of slow and unnecessary calculations during propagation.
+</p>
+
+<h3>Backtracking</h3>
+
+<p>
+    <strong>What needs to happen.</strong>
+    When the solver hits a dead end, it needs to undo all the changes from its
+    last guess and try the next letter.
+</p>
+
+<p>
+    <strong>How we make it fast.</strong>
+    Before propagation modifies any domain, the solver snapshots it. On backtrack, it
+    restores every saved domain in one batch.
+</p>
+
+<p>
+    An additional optimization makes this even faster:
+</p>
+
+<ul><li>
+    <strong>Forced-move inlining.</strong> If a cell has only one possible letter, we insert it inline without
+    pushing an additional stack frame &ndash; it's saved as part of the parent&rsquo;s trail entry. This keeps the trail shallow rather than
+    growing with every forced move.
+</li></ul>
+
+<h3>Where time is spent</h3>
+
+<p>
+    Where does the solver actually spend its time? The <code>sample</code> utility on macOS shows that almost all time is spent in propagation:
+</p>
+
+<table class="data">
+    <thead>
+        <tr>
+            <th>Function</th>
+            <th>15&times;15</th>
+            <th>7&times;7</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td><code>propagate_from_slots</code> &mdash; filter build, intersection</td>
+            <td>83.5%</td>
+            <td>82.0%</td>
+        </tr>
+        <tr>
+            <td><code>_platform_memmove</code> &mdash; filter copy, domain backup</td>
+            <td>9.4%</td>
+            <td>9.0%</td>
+        </tr>
+        <tr>
+            <td><code>compute_letter_counts_at</code> &mdash; crossing selection heuristic</td>
+            <td>4.3%</td>
+            <td>6.4%</td>
+        </tr>
+        <tr>
+            <td><code>save_domain</code> &mdash; trail bookkeeping</td>
+            <td>1.2%</td>
+            <td>1.1%</td>
+        </tr>
+        <tr>
+            <td>Search control, backtracking, malloc/free</td>
+            <td>1.6%</td>
+            <td>1.5%</td>
+        </tr>
+    </tbody>
+</table>
+<p class="bench-note">Over 92% of wall time is in the propagation loop and its memory copies. The inner loop is just bitwise AND, OR, popcount, and bulk copy &mdash; all of which compile to wide vector instructions.</p>
+
+<!-- ============================================================ -->
+<h2 id="extra">6. Extra Constraints</h2>
+
+<h3>Global constraints</h3>
+
+<p>
+    Orca supports two types of global (grid-level) constraints:
+</p>
+
+<ul>
+    <li><strong>No duplicate words.</strong> Every answer in the grid must be a different word.</li>
+    <li><strong>Max shared substring.</strong> A configurable limit (default: <em>6</em>) to avoid overly similar words, such as POLL<span class="substring-match">INATION</span> and IMAG<span class="substring-match">INATION</span>.</li>
+</ul>
+
+<p>
+    These are checked at the leaf, after a "solution" has been found. Since they are sparse global conditions, integrating them into propagation wouldn't be worth the cost.
+</p>
+
+<h3>Symmetry breaking</h3>
+
+<p>
+    Grids with diagonal symmetry can be transposed to produce a duplicate solution on the same grid. Orca can enforce a letter ordering between two mirror cells during propagation, cutting the search space in half.
+</p>
+
+<div class="grid-figure" id="sym-demo">
+    <div class="grid-toggle-wrap">
+        <button class="grid-toggle-btn" id="sym-transpose-btn">Transpose</button>
+    </div>
+    <table id="sym-grid"></table>
+    <p class="caption" id="sym-caption"></p>
+</div>
+<script>
+(function() {
+    var orig = [
+        '#CUBS#####BESO#',
+        'ARNETT###RANLOW',
+        'REDLEAF#MESTIZO',
+        'MARIELU#ACTEDIN',
+        'AMIEVER#GEARING',
+        '#SEVENTHINNING#',
+        '##DESTRUCTING##',
+        '#####CAGER#####',
+        '##HAMOPERATOR##',
+        '#PECANPRALINES#',
+        'HOWCUTE#SIDETWO',
+        'ALLURER#EZEKIEL',
+        'PEERESS#REPINED',
+        'ARTSET###SOLUTE',
+        '#STEN#####DOES#'
+    ];
+    var trans = [
+        '#ARMA#####HAPA#',
+        'CREAMS###POLERS',
+        'UNDRIED#HEWLETT',
+        'BELIEVE#ACCURSE',
+        'STEEVES#MAUREEN',
+        '#TALENTCONTEST#',
+        '##FURTRAPPERS##',
+        '#####HUGER#####',
+        '##MAGICERASER##',
+        '#RECENTRALIZES#',
+        'BASTANI#TIDEPOD',
+        'ENTERIN#ONEKILO',
+        'SLIDING#RETINUE',
+        'OOZING###SWEETS',
+        '#WONG#####OLDE#'
+    ];
+    var cA = {r:4, c:6}, cB = {r:6, c:4};
+    var flipped = false;
+    var cells = [];
+
+    // Build table once
+    var tbl = document.getElementById('sym-grid');
+    var html = '';
+    for (var r = 0; r < 15; r++) {
+        html += '<tr>';
+        for (var c = 0; c < 15; c++) {
+            var ch = orig[r][c];
+            var isBlack = ch === '#';
+            var cls = isBlack ? 'black' : 'letter';
+            if (r === cA.r && c === cA.c) cls += ' sym-cell-a';
+            else if (r === cB.r && c === cB.c) cls += ' sym-cell-b';
+            html += '<td class="'+cls+'" data-r="'+r+'" data-c="'+c+'">'+(isBlack ? '' : ch)+'</td>';
+        }
+        html += '</tr>';
+    }
+    tbl.innerHTML = html;
+
+    // Collect non-black cell references
+    tbl.querySelectorAll('td.letter').forEach(function(td) {
+        cells.push(td);
+    });
+
+    function updateCaption() {
+        var g = flipped ? trans : orig;
+        var lA = g[cA.r][cA.c], lB = g[cB.r][cB.c];
+        var ok = lB >= lA;
+        document.getElementById('sym-caption').innerHTML =
+            '<span class="sym-cell sym-cell-b">'+lB+'</span>'+
+            (ok ? ' is greater than or equal to ' : ' is <strong style="color:var(--red-dark);">NOT</strong> greater than or equal to ')+
+            '<span class="sym-cell sym-cell-a">'+lA+'</span>';
+    }
+
+    function swap() {
+        cells.forEach(function(td) { td.style.color = 'transparent'; });
+        setTimeout(function() {
+            var g = flipped ? trans : orig;
+            cells.forEach(function(td) {
+                var r = +td.getAttribute('data-r'), c = +td.getAttribute('data-c');
+                td.textContent = g[r][c];
+            });
+            updateCaption();
+            cells.forEach(function(td) { td.style.color = ''; });
+        }, 110);
+    }
+
+    document.getElementById('sym-transpose-btn').addEventListener('click', function() {
+        flipped = !flipped;
+        this.textContent = flipped ? 'Original' : 'Transpose';
+        swap();
+    });
+
+    updateCaption();
+})();
+</script>
+
+<h3>Check-only cells</h3>
+
+<p>
+    Grids can use <strong>wild cells</strong> for areas that shouldn't be enumerated. Slots that span both wild and fill cells are
+    marked "check-only": they participate in propagation but are never
+    branched on. Slots spanning only wild cells are ignored.
+</p>
+
+<div class="grid-figure">
+    <table id="check-only-grid"></table>
+    <script>renderCheckOnlyGrid('check-only-grid',
+        'GOFISH###***RJF\n' +
+        'TOYBOAT##***EEA\n' +
+        'QUIBBLES#***MTN\n' +
+        '****#OLES#**ISA\n' +
+        '****#GETTO##NKR\n' +
+        '***#HESTARTEDIT\n' +
+        '###CINCINNATUS#\n' +
+        '##CARBONDATES##\n' +
+        '#MAKEUPGAMES###\n' +
+        'POWERLIFTER#***\n' +
+        'IOC##BUREN#****\n' +
+        'RNA**#MEAT#****\n' +
+        'ASW***#ESIGNING\n' +
+        'TEE***##ENDZONE\n' +
+        'ETD***###GYMBAG',
+        '91111.......99b\n' +
+        '91111.......88a\n' +
+        'd5555.......88a\n' +
+        '............88a\n' +
+        '............88a\n' +
+        '...............\n' +
+        '...............\n' +
+        '...............\n' +
+        '...............\n' +
+        '...............\n' +
+        '88a............\n' +
+        '88a............\n' +
+        '88a.......11113\n' +
+        '88a.......11113\n' +
+        'cce.......55557');</script>
+    <p class="caption">Example: Orca only checks that <strong>any</strong> 7-letter word ends in AT.</p>
+</div>
+
+<p>
+    Filling the corners during the primary search would waste CPU time, and also produce too many solutions. <em>Crossword Compiler</em> also has this feature, which was active when running benchmarks.
+</p>
+
+<!-- ============================================================ -->
+<h2 id="parallel">7. Parallel Processing</h2>
+
+<p>
+    Orca works at three scales: sequential, multi-core, and distributed. All share the same <a href="#branching">cell-level branching</a> strategy &ndash; it's also the basis for job partitioning.
+</p>
+
+<h3>Initial partition splitting</h3>
+
+<p>
+    A priority queue ranks partitions &ndash; initially, the whole job is one partition &ndash; by a simple work estimate: sum of log<sub>2</sub>(remaining viable words) over all slots. The highest-cost partition is split one level at the best crossing cell, using the same
+    heuristic as search. This continues until a target number of partitions is reached.
+</p>
+
+<h3>Mid-search splitting</h3>
+
+<p>
+    Work estimates for partitions are very imprecise &ndash; some may turn out to be thousands of times larger than others. Orca handles this using automated mid-search splitting.
+</p>
+<p>
+    If a partition exceeds its timeout (local: <em>3 sec</em>, distributed: <em>5 min</em>), the worker walks its search stack
+    and emits one sub-partition per untried letter at each frame. Sub-partitions are returned
+    to the coordinator's pending queue.
+</p>
+
+<p>
+    <strong>No work is wasted</strong>. The split only emits sub-partitions for <em>untried</em>
+    letters, then removes them so the original worker has no branching left &mdash;
+    it finishes only its current leaf path (seconds of work) and returns.
+</p>
+
+<div class="grid-figure">
+    <svg viewBox="0 0 520 300" width="520" height="300" xmlns="http://www.w3.org/2000/svg">
+        <!-- Legend -->
+        <rect x="12" y="8" width="12" height="12" rx="2" fill="var(--silver)"/>
+        <text x="30" y="18" font-size="12" fill="var(--caption)">Already explored</text>
+        <rect x="138" y="8" width="12" height="12" rx="2" fill="var(--blue-dark)"/>
+        <text x="156" y="18" font-size="12" fill="var(--caption)">Current path</text>
+        <rect x="242" y="8" width="12" height="12" rx="2" fill="var(--red-dark)"/>
+        <text x="260" y="18" font-size="12" fill="var(--caption)">Split → other workers</text>
+
+        <!-- Root node -->
+        <circle cx="260" cy="60" r="14" fill="var(--blue-dark)"/>
+        <text x="260" y="64" text-anchor="middle" font-size="11" font-weight="600" fill="var(--bg)">R</text>
+
+        <!-- Frame 0: branch on cell (2,5). Tried: A,B. Current: C. Remaining: D,E → split -->
+        <!-- Edge to A (explored) -->
+        <line x1="248" y1="72" x2="80" y2="130" stroke="var(--silver)" stroke-width="1.5"/>
+        <circle cx="80" cy="140" r="12" fill="var(--silver)"/>
+        <text x="80" y="144" text-anchor="middle" font-size="10" font-weight="600" fill="var(--bg)">A</text>
+        <!-- A's subtree (explored) -->
+        <line x1="74" y1="150" x2="56" y2="178" stroke="var(--silver)" stroke-width="1"/>
+        <circle cx="56" cy="184" r="6" fill="var(--silver)"/>
+        <line x1="80" y1="152" x2="80" y2="178" stroke="var(--silver)" stroke-width="1"/>
+        <circle cx="80" cy="184" r="6" fill="var(--silver)"/>
+        <line x1="86" y1="150" x2="104" y2="178" stroke="var(--silver)" stroke-width="1"/>
+        <circle cx="104" cy="184" r="6" fill="var(--silver)"/>
+
+        <!-- Edge to B (explored) -->
+        <line x1="252" y1="73" x2="170" y2="130" stroke="var(--silver)" stroke-width="1.5"/>
+        <circle cx="170" cy="140" r="12" fill="var(--silver)"/>
+        <text x="170" y="144" text-anchor="middle" font-size="10" font-weight="600" fill="var(--bg)">B</text>
+        <!-- B's subtree (explored) -->
+        <line x1="164" y1="150" x2="146" y2="178" stroke="var(--silver)" stroke-width="1"/>
+        <circle cx="146" cy="184" r="6" fill="var(--silver)"/>
+        <line x1="170" y1="152" x2="170" y2="178" stroke="var(--silver)" stroke-width="1"/>
+        <circle cx="170" cy="184" r="6" fill="var(--silver)"/>
+        <line x1="176" y1="150" x2="194" y2="178" stroke="var(--silver)" stroke-width="1"/>
+        <circle cx="194" cy="184" r="6" fill="var(--silver)"/>
+
+        <!-- Edge to C (current) -->
+        <line x1="260" y1="74" x2="280" y2="128" stroke="var(--blue-dark)" stroke-width="2"/>
+        <circle cx="280" cy="140" r="12" fill="var(--blue-dark)"/>
+        <text x="280" y="144" text-anchor="middle" font-size="10" font-weight="600" fill="var(--bg)">C</text>
+
+        <!-- Frame 1 subtree under C: Tried: X. Current: Y. Remaining: Z → split -->
+        <!-- Edge to X (explored) -->
+        <line x1="274" y1="150" x2="244" y2="198" stroke="var(--silver)" stroke-width="1.5"/>
+        <circle cx="244" cy="208" r="10" fill="var(--silver)"/>
+        <text x="244" y="212" text-anchor="middle" font-size="9" font-weight="600" fill="var(--bg)">X</text>
+        <!-- X's subtree -->
+        <line x1="239" y1="216" x2="228" y2="240" stroke="var(--silver)" stroke-width="1"/>
+        <circle cx="228" cy="246" r="5" fill="var(--silver)"/>
+        <line x1="249" y1="216" x2="260" y2="240" stroke="var(--silver)" stroke-width="1"/>
+        <circle cx="260" cy="246" r="5" fill="var(--silver)"/>
+
+        <!-- Edge to Y (current path — worker finishes this) -->
+        <line x1="280" y1="152" x2="300" y2="198" stroke="var(--blue-dark)" stroke-width="2"/>
+        <circle cx="300" cy="208" r="10" fill="var(--blue-dark)"/>
+        <text x="300" y="212" text-anchor="middle" font-size="9" font-weight="600" fill="var(--bg)">Y</text>
+        <!-- Y's subtree (current leaf path) -->
+        <line x1="295" y1="216" x2="284" y2="240" stroke="var(--blue-dark)" stroke-width="1.5"/>
+        <circle cx="284" cy="246" r="5" fill="var(--blue-dark)"/>
+        <line x1="305" y1="216" x2="316" y2="240" stroke="var(--blue-dark)" stroke-width="1.5"/>
+        <circle cx="316" cy="246" r="5" fill="var(--blue-dark)"/>
+
+        <!-- Edge to Z (split off) -->
+        <line x1="286" y1="150" x2="356" y2="198" stroke="var(--red-dark)" stroke-width="1.5" stroke-dasharray="5,3"/>
+        <circle cx="356" cy="208" r="10" fill="var(--red-dark)"/>
+        <text x="356" y="212" text-anchor="middle" font-size="9" font-weight="600" fill="var(--bg)">Z</text>
+        <!-- Z's subtree (to be explored by other workers) -->
+        <line x1="351" y1="216" x2="340" y2="240" stroke="var(--salmon)" stroke-width="1"/>
+        <circle cx="340" cy="246" r="5" fill="var(--salmon)"/>
+        <line x1="361" y1="216" x2="372" y2="240" stroke="var(--salmon)" stroke-width="1"/>
+        <circle cx="372" cy="246" r="5" fill="var(--salmon)"/>
+
+        <!-- Edge to D (split off) -->
+        <line x1="268" y1="72" x2="400" y2="128" stroke="var(--red-dark)" stroke-width="1.5" stroke-dasharray="5,3"/>
+        <circle cx="400" cy="140" r="12" fill="var(--red-dark)"/>
+        <text x="400" y="144" text-anchor="middle" font-size="10" font-weight="600" fill="var(--bg)">D</text>
+        <!-- D's subtree -->
+        <line x1="394" y1="150" x2="376" y2="178" stroke="var(--salmon)" stroke-width="1"/>
+        <circle cx="376" cy="184" r="6" fill="var(--salmon)"/>
+        <line x1="400" y1="152" x2="400" y2="178" stroke="var(--salmon)" stroke-width="1"/>
+        <circle cx="400" cy="184" r="6" fill="var(--salmon)"/>
+        <line x1="406" y1="150" x2="424" y2="178" stroke="var(--salmon)" stroke-width="1"/>
+        <circle cx="424" cy="184" r="6" fill="var(--salmon)"/>
+
+        <!-- Edge to E (split off) -->
+        <line x1="272" y1="70" x2="480" y2="128" stroke="var(--red-dark)" stroke-width="1.5" stroke-dasharray="5,3"/>
+        <circle cx="480" cy="140" r="12" fill="var(--red-dark)"/>
+        <text x="480" y="144" text-anchor="middle" font-size="10" font-weight="600" fill="var(--bg)">E</text>
+        <!-- E's subtree -->
+        <line x1="474" y1="150" x2="456" y2="178" stroke="var(--salmon)" stroke-width="1"/>
+        <circle cx="456" cy="184" r="6" fill="var(--salmon)"/>
+        <line x1="480" y1="152" x2="480" y2="178" stroke="var(--salmon)" stroke-width="1"/>
+        <circle cx="480" cy="184" r="6" fill="var(--salmon)"/>
+        <line x1="486" y1="150" x2="504" y2="178" stroke="var(--salmon)" stroke-width="1"/>
+        <circle cx="504" cy="184" r="6" fill="var(--salmon)"/>
+
+        <!-- Caption -->
+        <text x="260" y="280" text-anchor="middle" font-size="12" fill="var(--caption)" font-style="italic">Timeout fires → worker finishes blue path, red branches go to coordinator.</text>
+
+        <!-- Scissors on dashed lines -->
+        <text x="432" y="110" font-size="14">✂</text>
+        <text x="340" y="110" font-size="14">✂</text>
+        <text x="324" y="182" font-size="12">✂</text>
+    </svg>
+</div>
+
+<h3>Distributed architecture</h3>
+
+<p>
+    For parallelizing beyond one local machine, a coordinator manages jobs and partitions via gRPC.
+    Workers pull partitions, reconstruct solver state (deterministically) from the seeded letters, and execute the search.
+</p>
+
+<div class="grid-figure">
+    <svg viewBox="0 0 480 200" width="530" height="220" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <marker id="arrowRight" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <path d="M0,0 L8,3 L0,6 Z" fill="var(--caption)"/>
+            </marker>
+        </defs>
+
+        <!-- Coordinator box -->
+        <rect x="155" y="10" width="170" height="80" rx="10" fill="var(--blue-light)" stroke="var(--blue-dark)" stroke-width="2"/>
+        <text x="240" y="35" text-anchor="middle" font-size="13" font-weight="700" fill="var(--blue-dark)">Coordinator</text>
+        <text x="240" y="52" text-anchor="middle" font-size="9" fill="var(--caption)">gRPC + HTTP</text>
+        <text x="240" y="65" text-anchor="middle" font-size="9" fill="var(--caption)">partition queue · job state</text>
+        <text x="240" y="78" text-anchor="middle" font-size="9" fill="var(--caption)">dict storage · web UI</text>
+
+        <!-- Worker 1 -->
+        <rect x="10" y="130" width="100" height="55" rx="8" fill="var(--red-light)" stroke="var(--orange-dark)" stroke-width="1.5"/>
+        <text x="60" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="var(--orange-dark)">Worker 1</text>
+        <text x="60" y="166" text-anchor="middle" font-size="9" fill="var(--caption)">solve partition</text>
+        <text x="60" y="178" text-anchor="middle" font-size="9" fill="var(--caption)">report results</text>
+
+        <!-- Worker 2 -->
+        <rect x="140" y="130" width="100" height="55" rx="8" fill="var(--red-light)" stroke="var(--orange-dark)" stroke-width="1.5"/>
+        <text x="190" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="var(--orange-dark)">Worker 2</text>
+        <text x="190" y="166" text-anchor="middle" font-size="9" fill="var(--caption)">solve partition</text>
+        <text x="190" y="178" text-anchor="middle" font-size="9" fill="var(--caption)">report results</text>
+
+        <!-- Worker N -->
+        <rect x="280" y="130" width="100" height="55" rx="8" fill="var(--red-light)" stroke="var(--orange-dark)" stroke-width="1.5"/>
+        <text x="330" y="152" text-anchor="middle" font-size="10" font-weight="600" fill="var(--orange-dark)">Worker N</text>
+        <text x="330" y="166" text-anchor="middle" font-size="9" fill="var(--caption)">solve partition</text>
+        <text x="330" y="178" text-anchor="middle" font-size="9" fill="var(--caption)">report results</text>
+
+        <!-- Dots between 2 and N -->
+        <text x="260" y="162" font-size="14" fill="var(--caption)">···</text>
+
+        <!-- Arrows: coordinator → workers (GetWork) -->
+        <line x1="195" y1="90" x2="70" y2="128" stroke="var(--caption)" stroke-width="1.2" marker-end="url(#arrowRight)"/>
+        <line x1="225" y1="90" x2="195" y2="128" stroke="var(--caption)" stroke-width="1.2" marker-end="url(#arrowRight)"/>
+        <line x1="270" y1="90" x2="325" y2="128" stroke="var(--caption)" stroke-width="1.2" marker-end="url(#arrowRight)"/>
+
+        <!-- Web UI -->
+        <rect x="390" y="25" width="80" height="50" rx="8" fill="var(--code-bg)" stroke="var(--border)" stroke-width="1.5"/>
+        <text x="430" y="48" text-anchor="middle" font-size="10" font-weight="600" fill="var(--caption)">Web UI</text>
+        <text x="430" y="62" text-anchor="middle" font-size="9" fill="var(--caption)">monitor</text>
+        <line x1="325" y1="50" x2="388" y2="50" stroke="var(--border)" stroke-width="1.2" marker-end="url(#arrowRight)"/>
+        <text x="356" y="44" font-size="8" fill="var(--caption)">HTTP</text>
+
+        <!-- Heartbeat label -->
+        <text x="155" y="122" text-anchor="middle" font-size="8" fill="var(--caption)" font-style="italic">heartbeat every 10s</text>
+        <text x="240" y="122" text-anchor="middle" font-size="8" fill="var(--caption)" font-style="italic">45s timeout</text>
+    </svg>
+</div>
+
+<p>
+    <strong>Fault tolerance</strong>: heartbeats every 10s, 45s timeout reassigns
+    stale partitions. Workers handle SIGTERM gracefully. Coordinator persists job progress to disk regularly for crash recovery.
+</p>
+
+<h2 id="screenshots">8. Screenshots</h2>
+
+<p>
+    Below are some screenshots of Orca's coordinator UI (not yet publicly released). Orca can also run locally from a command line interface.
+</p>
+
+<div class="screenshot-gallery">
+    <div class="screenshot-tabs" id="screenshot-tabs">
+        <div class="tab active" data-src="screenshot-1.png" data-caption="Orca's grid builder, making use of wild cells and symmetry break.">Submit Job</div>
+        <div class="tab" data-src="screenshot-2.png" data-caption="Connected to 100 cloud instances on Google Cloud.">Workers</div>
+        <div class="tab" data-src="screenshot-3.png" data-caption="Orca can use local macOS, Windows, or Linux machines as workers.">Local Workers</div>
+        <div class="tab" data-src="screenshot-4.png" data-caption="A job in progress &ndash; unconstrained cells (purple) have been distinguished from check-only cells (pink). Hovering over a partition shows the seed letters for that subtask.">Job Detail</div>
+        <div class="tab" data-src="screenshot-5.png" data-caption="Orca autocollapses similar solutions (the ?? can be TI or CA) for easier browsing.">Solutions</div>
+    </div>
+    <div class="screenshot-main" id="screenshot-main"></div>
+    <p class="caption" id="screenshot-caption"></p>
+</div>
+<script>
+(function() {
+    var tabs = document.querySelectorAll('#screenshot-tabs .tab');
+    var main = document.getElementById('screenshot-main');
+    var caption = document.getElementById('screenshot-caption');
+
+    function select(item) {
+        tabs.forEach(function(t) { t.classList.remove('active'); });
+        item.classList.add('active');
+        var src = item.getAttribute('data-src');
+        var cap = item.getAttribute('data-caption');
+        main.innerHTML = '<img src="' + src + '" alt="Screenshot">';
+        caption.textContent = cap;
+    }
+
+    tabs.forEach(function(item) {
+        item.addEventListener('click', function() { select(item); });
+    });
+
+    // Select the first one by default
+    select(tabs[0]);
+})();
+</script>
+
+<h2 id="conclusion">9. Final Notes</h2>
+
+<p>
+    Orca's solver code &ndash; other than the coordinator UI and distributed framework &ndash; is <a href="https://github.com/rainjacket/orca-solver">open source</a> with an MIT license. <em>Claude Code</em> was used as an AI tool while building Orca.
+</p>
+
+<p>
+    Future work on the Orca solver could include:
+</p>
+
+<ul>
+    <li>More analysis of branching heuristics on a larger range of grids.</li>
+    <li>Learning a branching order dynamically, instead of relying fully on one heuristic.</li>
+    <li>Features to support more use cases, such as support for other grid constraints.</li>
+</ul>
+
+<p>Enjoy this mini crossword, which did not require a system as powerful as this to create!</p>
+
+<div class="mini-xword" id="miniXword">
+    <div class="xword-grid">
+        <table>
+            <tr>
+                <td class="xword-cell" data-r="0" data-c="0"><span class="xword-num">1</span><input type="text" maxlength="1" data-r="0" data-c="0" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="0" data-c="1"><span class="xword-num">2</span><input type="text" maxlength="1" data-r="0" data-c="1" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="0" data-c="2"><span class="xword-num">3</span><input type="text" maxlength="1" data-r="0" data-c="2" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="0" data-c="3"><span class="xword-num">4</span><input type="text" maxlength="1" data-r="0" data-c="3" autocomplete="off" autocapitalize="characters"></td>
+            </tr>
+            <tr>
+                <td class="xword-cell" data-r="1" data-c="0"><span class="xword-num">5</span><input type="text" maxlength="1" data-r="1" data-c="0" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="1" data-c="1"><input type="text" maxlength="1" data-r="1" data-c="1" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="1" data-c="2"><input type="text" maxlength="1" data-r="1" data-c="2" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="1" data-c="3"><input type="text" maxlength="1" data-r="1" data-c="3" autocomplete="off" autocapitalize="characters"></td>
+            </tr>
+            <tr>
+                <td class="xword-cell" data-r="2" data-c="0"><span class="xword-num">6</span><input type="text" maxlength="1" data-r="2" data-c="0" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="2" data-c="1"><input type="text" maxlength="1" data-r="2" data-c="1" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="2" data-c="2"><input type="text" maxlength="1" data-r="2" data-c="2" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="2" data-c="3"><input type="text" maxlength="1" data-r="2" data-c="3" autocomplete="off" autocapitalize="characters"></td>
+            </tr>
+            <tr>
+                <td class="xword-cell" data-r="3" data-c="0"><span class="xword-num">7</span><input type="text" maxlength="1" data-r="3" data-c="0" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="3" data-c="1"><input type="text" maxlength="1" data-r="3" data-c="1" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="3" data-c="2"><input type="text" maxlength="1" data-r="3" data-c="2" autocomplete="off" autocapitalize="characters"></td>
+                <td class="xword-cell" data-r="3" data-c="3"><input type="text" maxlength="1" data-r="3" data-c="3" autocomplete="off" autocapitalize="characters"></td>
+            </tr>
+        </table>
+    </div>
+    <div class="xword-clues">
+        <div class="xword-clue-group">
+            <h4>Across</h4>
+            <div class="xword-clue" data-dir="across" data-num="1" data-r="0" data-c="0">1. Black-and-white marine animal</div>
+            <div class="xword-clue" data-dir="across" data-num="5" data-r="1" data-c="0">5. Part of a dictionary</div>
+            <div class="xword-clue" data-dir="across" data-num="6" data-r="2" data-c="0">6. "KPop Demon Hunters" singer-songwriter</div>
+            <div class="xword-clue" data-dir="across" data-num="7" data-r="3" data-c="0">7. Ballpark concessions, informally</div>
+        </div>
+        <div class="xword-clue-group">
+            <h4>Down</h4>
+            <div class="xword-clue" data-dir="down" data-num="1" data-r="0" data-c="0">1. Needed to pay up</div>
+            <div class="xword-clue" data-dir="down" data-num="2" data-r="0" data-c="1">2. Red, in Spanish</div>
+            <div class="xword-clue" data-dir="down" data-num="3" data-r="0" data-c="2">3. Rock climbing hotspot</div>
+            <div class="xword-clue" data-dir="down" data-num="4" data-r="0" data-c="3">4. Fruity drinks</div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    var answer = [['O','R','C','A'],['W','O','R','D'],['E','J','A','E'],['D','O','G','S']];
+    var wrap = document.getElementById('miniXword');
+    var cells = wrap.querySelectorAll('.xword-cell');
+    var inputs = wrap.querySelectorAll('.xword-cell input');
+    var clueEls = wrap.querySelectorAll('.xword-clue');
+    var dir = 'across', focR = 0, focC = 0;
+    var acrossNums = {0:'1',1:'5',2:'6',3:'7'};
+    var downNums = {0:'1',1:'2',2:'3',3:'4'};
+
+    function getInput(r, c) {
+        return wrap.querySelector('input[data-r="'+r+'"][data-c="'+c+'"]');
+    }
+    function getCell(r, c) {
+        return wrap.querySelector('td[data-r="'+r+'"][data-c="'+c+'"]');
+    }
+
+    function highlight() {
+        cells.forEach(function(td) { td.classList.remove('highlight','focus'); });
+        clueEls.forEach(function(cl) { cl.classList.remove('active'); });
+        if (dir === 'across') {
+            for (var c = 0; c < 4; c++) getCell(focR, c).classList.add('highlight');
+        } else {
+            for (var r = 0; r < 4; r++) getCell(r, focC).classList.add('highlight');
+        }
+        getCell(focR, focC).classList.add('focus');
+        var num = dir === 'across' ? acrossNums[focR] : downNums[focC];
+        clueEls.forEach(function(cl) {
+            if (cl.dataset.dir === dir && cl.dataset.num === num) cl.classList.add('active');
+        });
+    }
+
+    function focusCell(r, c) {
+        focR = r; focC = c;
+        getInput(r, c).focus();
+        highlight();
+    }
+
+    function advance() {
+        if (dir === 'across' && focC < 3) focusCell(focR, focC + 1);
+        else if (dir === 'down' && focR < 3) focusCell(focR + 1, focC);
+    }
+
+    function retreat() {
+        if (dir === 'across' && focC > 0) focusCell(focR, focC - 1);
+        else if (dir === 'down' && focR > 0) focusCell(focR - 1, focC);
+    }
+
+    function checkSolved() {
+        for (var r = 0; r < 4; r++)
+            for (var c = 0; c < 4; c++)
+                if (getInput(r, c).value.toUpperCase() !== answer[r][c]) return;
+        wrap.classList.add('solved');
+    }
+
+    inputs.forEach(function(inp) {
+        var r = +inp.dataset.r, c = +inp.dataset.c;
+
+        inp.addEventListener('mousedown', function(e) {
+            if (focR === r && focC === c && document.activeElement === inp) {
+                dir = dir === 'across' ? 'down' : 'across';
+                highlight();
+                e.preventDefault();
+            }
+        });
+
+        inp.addEventListener('focus', function() {
+            if (focR !== r || focC !== c) { focR = r; focC = c; highlight(); }
+        });
+
+        inp.addEventListener('keydown', function(e) {
+            if (e.key === 'Backspace') {
+                e.preventDefault();
+                if (inp.value) { inp.value = ''; wrap.classList.remove('solved'); }
+                else { retreat(); getInput(focR, focC).value = ''; wrap.classList.remove('solved'); }
+                return;
+            }
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                var words = [
+                    {dir:'across',r:0,c:0},{dir:'across',r:1,c:0},{dir:'across',r:2,c:0},{dir:'across',r:3,c:0},
+                    {dir:'down',r:0,c:0},{dir:'down',r:0,c:1},{dir:'down',r:0,c:2},{dir:'down',r:0,c:3}
+                ];
+                var cur = -1;
+                for (var i = 0; i < words.length; i++) {
+                    var w = words[i];
+                    if (w.dir === dir && ((dir === 'across' && w.r === focR) || (dir === 'down' && w.c === focC))) { cur = i; break; }
+                }
+                var next = e.shiftKey ? (cur - 1 + 8) % 8 : (cur + 1) % 8;
+                dir = words[next].dir;
+                focusCell(words[next].r, words[next].c);
+                return;
+            }
+            if (e.key === 'ArrowLeft')  { e.preventDefault(); dir = 'across'; if (focC > 0) focusCell(focR, focC-1); else highlight(); return; }
+            if (e.key === 'ArrowRight') { e.preventDefault(); dir = 'across'; if (focC < 3) focusCell(focR, focC+1); else highlight(); return; }
+            if (e.key === 'ArrowUp')    { e.preventDefault(); dir = 'down'; if (focR > 0) focusCell(focR-1, focC); else highlight(); return; }
+            if (e.key === 'ArrowDown')  { e.preventDefault(); dir = 'down'; if (focR < 3) focusCell(focR+1, focC); else highlight(); return; }
+            if (/^[a-zA-Z]$/.test(e.key)) {
+                e.preventDefault();
+                inp.value = e.key.toUpperCase();
+                wrap.classList.remove('solved');
+                checkSolved();
+                advance();
+            }
+        });
+    });
+
+    clueEls.forEach(function(cl) {
+        cl.addEventListener('click', function() {
+            dir = cl.dataset.dir;
+            var r = +cl.dataset.r, c = +cl.dataset.c;
+            if (dir === 'across') {
+                for (var cc = 0; cc < 4; cc++) { if (!getInput(r, cc).value) { focusCell(r, cc); return; } }
+                focusCell(r, 0);
+            } else {
+                for (var rr = 0; rr < 4; rr++) { if (!getInput(rr, c).value) { focusCell(rr, c); return; } }
+                focusCell(0, c);
+            }
+        });
+    });
+})();
+</script>
+
+<svg class="closing-wave" viewBox="0 0 400 32" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="waveGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="var(--bg)"/>
+            <stop offset="20%" stop-color="var(--blue-dark)" stop-opacity="0.4"/>
+            <stop offset="50%" stop-color="var(--green-dark)" stop-opacity="0.5"/>
+            <stop offset="80%" stop-color="var(--blue-dark)" stop-opacity="0.4"/>
+            <stop offset="100%" stop-color="var(--bg)"/>
+        </linearGradient>
+    </defs>
+    <path d="M0,20 Q50,8 100,16 T200,14 T300,18 T400,12" fill="none" stroke="url(#waveGrad)" stroke-width="2" stroke-linecap="round"/>
+    <path d="M0,24 Q50,14 100,22 T200,18 T300,24 T400,16" fill="none" stroke="url(#waveGrad)" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/>
+</svg>
+<p class="closing-text">Thanks for reading!</p>
+
+</article>
+</body>
+</html>
