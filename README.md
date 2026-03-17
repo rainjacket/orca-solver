@@ -1,10 +1,10 @@
 # Orca
 
+**[How Orca Works](https://rainjacket.github.io/orca-solver/)** — a blog post style explanation of the algorithm and design.
+
 A high-performance crossword grid filler.
 
 Orca is designed for wide-open grids that are difficult for other solvers. It uses AC-3 propagation with cell-level branching, and tuned heuristics for rapid exhaustive search. Multi-threaded search is supported via partition-based parallelism.
-
-**[How Orca Works](https://rainjacket.github.io/orca-solver/)** — a blog post style explanation of the algorithm and design.
 
 ## Installation
 

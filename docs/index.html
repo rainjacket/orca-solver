@@ -624,6 +624,8 @@
             margin-bottom: 4px;
         }
 
+        .bench-time { font-style: italic; }
+
         /* ── Closing ── */
         .closing-wave {
             display: block;
@@ -1014,7 +1016,7 @@
 <p class="subtitle">
     Inside a high-performance crossword grid filler.
 </p>
-<p class="byline">John Hawksley &middot; March 12, 2026</p>
+<p class="byline">John Hawksley &middot; March 16, 2026</p>
 
 <p class="lede">
     Orca is a high-performance crossword grid filler, specializing in exhaustive search over wide-open grids with large unconstrained regions.
@@ -1180,10 +1182,10 @@
         <line x1="520" y1="0" x2="520" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
         <!-- Orca: 5.267min × 16.25 = 85.6 -->
         <rect x="0" y="0" width="85.6" height="26" rx="3" fill="var(--green-dark)" onmouseenter="showSwTip(event,'orca')" onmouseleave="hideTooltip('swTip')"/>
-        <text x="90.6" y="17.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Orca &#x2009; <tspan font-style="italic">5 min 16 sec</tspan></text>
+        <text x="90.6" y="17.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Orca &#x2009; <tspan class="bench-time">5 min 16 sec</tspan></text>
         <!-- Crossword Compiler: 30.5min × 16.25 = 495.6 -->
         <rect x="0" y="34" width="495.6" height="26" rx="3" fill="var(--silver)" onmouseenter="showSwTip(event,'cc')" onmouseleave="hideTooltip('swTip')"/>
-        <text x="5" y="51.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Crossword Compiler &#x2009; <tspan font-style="italic">30 min 30 sec</tspan></text>
+        <text x="5" y="51.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Crossword Compiler &#x2009; <tspan class="bench-time">30 min 30 sec</tspan></text>
     </svg>
     <svg viewBox="0 0 520 16" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block;">
         <line x1="0" y1="0" x2="520" y2="0" stroke="var(--border)" stroke-width="1"/>
@@ -1210,7 +1212,7 @@
 
 <!-- 15×15 benchmark: bars x=0..520, max=7hr=420min, scale=520/420=1.2381px/min -->
 <div class="bench-section">
-    <div class="bench-title grid-trigger" onmouseenter="showTooltip(event,'grid15')" onmouseleave="hideTooltip('grid15')">15&times;15, not filling corners, 4 seed letters</div>
+    <div class="bench-title grid-trigger" onmouseenter="showTooltip(event,'grid15')" onmouseleave="hideTooltip('grid15')">15&times;15, center stack only, 4 seed letters</div>
     <svg viewBox="0 0 520 60" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block;">
         <!-- gridlines spanning both bars -->
         <line x1="74.3" y1="0" x2="74.3" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
@@ -1222,10 +1224,10 @@
         <line x1="520" y1="0" x2="520" y2="60" stroke="var(--rule-gray)" stroke-width="0.5"/>
         <!-- Orca -->
         <rect x="0" y="0" width="5" height="26" rx="1" fill="var(--green-dark)" onmouseenter="showSwTip(event,'orca')" onmouseleave="hideTooltip('swTip')"/>
-        <text x="10" y="17.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Orca &#x2009; <tspan font-style="italic">3 min 41 sec</tspan></text>
+        <text x="10" y="17.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Orca &#x2009; <tspan class="bench-time">3 min 41 sec</tspan></text>
         <!-- Crossword Compiler -->
         <rect x="0" y="34" width="514" height="26" rx="3" fill="var(--silver)" onmouseenter="showSwTip(event,'cc')" onmouseleave="hideTooltip('swTip')"/>
-        <text x="5" y="51.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Crossword Compiler &#x2009; <tspan font-style="italic">6 hrs 55 min</tspan></text>
+        <text x="5" y="51.5" text-anchor="start" font-size="13" fill="var(--text)" pointer-events="none">Crossword Compiler &#x2009; <tspan class="bench-time">6 hrs 55 min</tspan></text>
     </svg>
     <svg viewBox="0 0 520 16" width="100%" xmlns="http://www.w3.org/2000/svg" style="display:block;">
         <line x1="0" y1="0" x2="520" y2="0" stroke="var(--border)" stroke-width="1"/>
@@ -1258,7 +1260,7 @@ var GRID_15x15 = '*****.###******\n*****..##******\n*****...#******\n****#....#*
 renderGridSvg('grid7', GRID_7x7, 16);
 renderGridSvg('grid15', GRID_15x15, 11);
 </script>
-<p class="bench-note">Single thread exhaustive search, same <span class="has-tip">hardware<span class="tip tooltip-box">Windows 11 Pro &middot; AMD Ryzen AI Max 390 &middot; 64 GB RAM 8000 MT/s</span></span> and <span class="has-tip">dictionary<span class="tip tooltip-box">33,000 7-letter words &middot; 35,000 11-letter words &middot; 411,000 total 3-15 letter words</span></span>.<br>Crossfire, Crosserville, and Ingrid were also tested but were much slower.</p>
+<p class="bench-note">Single-threaded exhaustive search, same <span class="has-tip">hardware<span class="tip tooltip-box">Windows 11 Pro &middot; AMD Ryzen AI Max 390 &middot; 64 GB RAM 8000 MT/s</span></span> and <span class="has-tip">dictionary<span class="tip tooltip-box">33,000 7-letter words &middot; 35,000 11-letter words &middot; 411,000 total 3-15 letter words</span></span>.<br>Crossfire, Crosserville, and Ingrid were also tested but were much slower.</p>
 
 <p>
     The 15&times;15 benchmark has a wider gap than the 7&times;7 &ndash; since its grid is larger and less uniform, it's more sensitive to <em>search strategy</em>, e.g. the order in which slots are filled.
@@ -1267,7 +1269,7 @@ renderGridSvg('grid15', GRID_15x15, 11);
 <h3>Multithreaded scaling</h3>
 
 <p>
-    Orca parallelizes with low overhead, and scales well across cores:
+    Orca also parallelizes with low overhead, and scales well across cores:
 </p>
 
 <div class="grid-figure tooltip-wrap">
@@ -1608,7 +1610,7 @@ renderGridSvg('threadGrid15', GRID_15x15, 11);
 </ol>
 
 <p>
-    However, propagation order does impact <strong>speed</strong>, because once a contradiction is found we can stop. Orca uses a priority queue to propagate slots with <em>fewest remaining options</em> first &ndash; spotting dead ends faster. In an ablation test, this was 2.5x faster than a standard <a href="https://en.wikipedia.org/wiki/FIFO_(computing_and_electronics)">FIFO</a> queue:
+    However, propagation order does impact speed, because once a contradiction is found we can stop. Orca uses a priority queue to propagate the slot with <em>fewest remaining options</em> first, spotting dead ends faster. Compared to a standard <a href="https://en.wikipedia.org/wiki/FIFO_(computing_and_electronics)">FIFO</a> queue, this was 2.5x faster:
 </p>
 
 <table class="data">
@@ -2814,9 +2816,9 @@ var animData = { anim15: renderAnimGrid('anim15',
 </p>
 
 <ul>
-    <li>More analysis of branching heuristics on a larger range of grids.</li>
-    <li>Learning a branching order dynamically, instead of relying fully on one heuristic.</li>
-    <li>Features to support more use cases, such as support for other grid constraints.</li>
+    <li>Analysis of more types of grids, such as ones that could be decomposed into sub-problems (often four mostly-independent corners).</li>
+    <li>Improved branching heuristics, or learning a good branching order dynamically.</li>
+    <li>Support for more use cases, such as rebus squares and other special grid constraints.</li>
 </ul>
 
 <p>Enjoy this mini crossword, which did not require a system as powerful as this to create!</p>
