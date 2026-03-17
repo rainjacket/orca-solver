@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta property="og:title" content="Orca FAQ — For Crossword Constructors">
+    <meta property="og:description" content="Frequently asked questions about Orca, a high-performance crossword grid filler.">
+    <meta property="og:type" content="article">
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
+    <link rel="icon" type="image/png" href="favicon.png">
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <title>Orca FAQ — For Crossword Constructors</title>
+    <style>
+        :root {
+            --text: #1a1a2e;
+            --bg: #ffffff;
+            --blue-dark: #0f4c75;
+            --blue-light: #e8f1f8;
+            --code-bg: #f6f8fa;
+            --border: #d0d7de;
+            --caption: #636c76;
+            --sans: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            --green-dark: #2e7d32;
+            --blue-underline: rgba(15, 76, 117, 0.3);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Georgia', 'Charter', 'Bitstream Charter', serif;
+            color: var(--text);
+            background: var(--bg);
+            line-height: 1.75;
+            font-size: 17px;
+        }
+
+        article {
+            max-width: 720px;
+            margin: 0 auto;
+            padding: 60px 24px 120px;
+        }
+
+        h1 {
+            font-size: 2.4em;
+            line-height: 1.15;
+            margin-bottom: 12px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            font-size: 1.15em;
+            color: var(--caption);
+            margin-bottom: 32px;
+            line-height: 1.5;
+        }
+
+        a {
+            color: var(--blue-dark);
+            text-decoration: underline;
+            text-decoration-color: var(--blue-underline);
+            text-underline-offset: 2px;
+        }
+
+        a:hover { text-decoration-color: var(--blue-dark); }
+
+        code {
+            font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Consolas', monospace;
+            font-size: 0.85em;
+            background: var(--code-bg);
+            padding: 2px 6px;
+            border-radius: 4px;
+            border: 1px solid var(--border);
+        }
+
+        hr {
+            border: none;
+            border-top: 1px solid var(--border);
+            margin: 48px 0;
+        }
+
+        p { margin-bottom: 20px; }
+
+        .faq-item {
+            margin-bottom: 16px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .faq-item summary {
+            font-family: var(--sans);
+            font-size: 1.2em;
+            font-weight: 600;
+            color: var(--blue-dark);
+            cursor: pointer;
+            padding: 12px 0;
+            list-style: none;
+        }
+
+        .faq-item summary::-webkit-details-marker { display: none; }
+
+        .faq-item summary::before {
+            content: '\25B6';
+            display: inline-block;
+            font-size: 0.6em;
+            margin-right: 10px;
+            transition: transform 0.2s;
+            vertical-align: 2px;
+        }
+
+        .faq-item[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        .faq-answer {
+            line-height: 1.75;
+            padding-bottom: 12px;
+        }
+
+        .back-link {
+            font-family: var(--sans);
+            font-size: 0.9em;
+            margin-bottom: 32px;
+            display: block;
+        }
+
+        .closing-wave {
+            display: block;
+            max-width: 300px;
+            margin: 32px auto 12px;
+        }
+
+        .closing-text {
+            text-align: center;
+            font-style: italic;
+            color: var(--caption);
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+<article>
+    <a class="back-link" href="index.html">&larr; How Orca Works</a>
+
+    <h1>Orca FAQ</h1>
+    <p class="subtitle">Frequently asked questions for crossword constructors.</p>
+
+    <details class="faq-item">
+        <summary>1. Can I use this, and how?</summary>
+        <div class="faq-answer">
+            <p>Yes, but currently it may not be that "out of the box" to use &mdash; especially for non-IT people. You can download an executable file from <a href="https://github.com/rainjacket/orca-solver/releases">GitHub</a> and run it from the command line, passing in a wordlist and a grid file. The command line tool only runs on a single local machine (on a configurable number of threads) and, when it completes, it simply prints out all the solutions it finds.</p>
+        </div>
+    </details>
+
+    <details class="faq-item">
+        <summary>2. Are you planning to release the coordinator UI?</summary>
+        <div class="faq-answer">
+            <p>Right now the coordinator UI isn't really a hardened software application that would be intuitive for anybody to use. It's also deeply entwined into my personal setup which uses Google Cloud (requiring a Google payment account, etc.). If there's enough interest then in the future I will put some time into releasing a more fully featured system with a proper UI, instead of just the algorithm.</p>
+        </div>
+    </details>
+
+    <details class="faq-item">
+        <summary>3. Does Orca use wordlist scoring?</summary>
+        <div class="faq-answer">
+            <p>Currently no, it does an exhaustive search over your entire dictionary. It wouldn't be that hard to incorporate some ways to use the wordlist scores, but I haven't had a use case for this personally because I am focusing on exhaustive search.</p>
+        </div>
+    </details>
+
+    <details class="faq-item">
+        <summary>4. What types of grids is this good for?</summary>
+        <div class="faq-answer">
+            <p>Right now it's best for grids that have few total solutions. For easier-to-fill grids, it wouldn't be a very good experience to use Orca because it would start outputting an exhaustive list of billions of possible solution combinations. Orca is also currently more optimized for singular "cavern"-like regions rather than grids with multiple semi-independent regions (which you should probably still break up and fill in parts).</p>
+        </div>
+    </details>
+
+    <details class="faq-item">
+        <summary>5. Can I incorporate this into my own software?</summary>
+        <div class="faq-answer">
+            <p>If you are a maker of crossword construction software, feel free to incorporate concepts from the <a href="index.html">write-up</a> into how you think about building a solver. For more extensive integration, feel free to do so with attribution &mdash; the Rust code is open source with an <a href="https://github.com/rainjacket/orca-solver/blob/main/LICENSE">MIT license</a>.</p>
+        </div>
+    </details>
+
+    <p>If you have questions not covered here, you can reach me directly on the <a href="https://discord.gg/kG329EAnZ8">Crosscord</a> Discord server. My username is <strong>John Hawksley (calmdowntime)</strong>.</p>
+
+<svg class="closing-wave" viewBox="0 0 400 32" width="100%" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="waveGrad" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="var(--bg)"/>
+            <stop offset="20%" stop-color="var(--blue-dark)" stop-opacity="0.4"/>
+            <stop offset="50%" stop-color="var(--green-dark)" stop-opacity="0.5"/>
+            <stop offset="80%" stop-color="var(--blue-dark)" stop-opacity="0.4"/>
+            <stop offset="100%" stop-color="var(--bg)"/>
+        </linearGradient>
+    </defs>
+    <path d="M0,20 Q50,8 100,16 T200,14 T300,18 T400,12" fill="none" stroke="url(#waveGrad)" stroke-width="2" stroke-linecap="round"/>
+    <path d="M0,24 Q50,14 100,22 T200,18 T300,24 T400,16" fill="none" stroke="url(#waveGrad)" stroke-width="1.2" stroke-linecap="round" opacity="0.5"/>
+</svg>
+<p class="closing-text">Thanks for reading!</p>
+
+</article>
+</body>
+</html>
