@@ -64,7 +64,14 @@ pub fn solve_parallel(
     num_threads: usize,
     disallow_shared_substring: usize,
 ) -> ParallelResult {
-    solve_parallel_inner(grid_text, dict, config, num_threads, disallow_shared_substring, None)
+    solve_parallel_inner(
+        grid_text,
+        dict,
+        config,
+        num_threads,
+        disallow_shared_substring,
+        None,
+    )
 }
 
 /// Like `solve_parallel`, but with shared progress state for a display thread.
@@ -133,7 +140,6 @@ fn solve_parallel_inner(
     let total_solutions = Arc::new(AtomicU64::new(0));
     let total_nodes = Arc::new(AtomicU64::new(0));
 
-
     // Collected results from all threads
     let results: Arc<Mutex<Vec<(Vec<(String, Vec<String>)>, SolverStats, bool)>>> =
         Arc::new(Mutex::new(Vec::new()));
@@ -191,10 +197,7 @@ fn solve_parallel_inner(
                             if let Some(ref p) = progress {
                                 let thread_idx = rayon::current_thread_index().unwrap_or(0);
                                 if thread_idx < p.thread_descriptions.len() {
-                                    p.thread_descriptions[thread_idx]
-                                        .lock()
-                                        .unwrap()
-                                        .clear();
+                                    p.thread_descriptions[thread_idx].lock().unwrap().clear();
                                 }
                             }
                             return;

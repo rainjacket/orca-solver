@@ -106,7 +106,9 @@ fn main() {
 
     let result = match cli.command {
         Commands::Fill {
-            grid: None, dict: _, ..
+            grid: None,
+            dict: _,
+            ..
         } => interactive_fill(),
         Commands::Fill {
             grid: Some(grid_path),
@@ -231,7 +233,14 @@ fn interactive_fill() -> Result<()> {
     };
 
     print_fill_header(&grid, &dict, &config, disallow_shared_substring, threads);
-    run_fill(&grid_text, &grid, &dict, &config, threads, disallow_shared_substring)
+    run_fill(
+        &grid_text,
+        &grid,
+        &dict,
+        &config,
+        threads,
+        disallow_shared_substring,
+    )
 }
 
 /// Expand `~` at the start of a path to the user's home directory.
@@ -323,7 +332,14 @@ fn cmd_fill(
     };
 
     print_fill_header(&grid, &dict, &config, disallow_shared_substring, threads);
-    run_fill(&grid_text, &grid, &dict, &config, threads, disallow_shared_substring)
+    run_fill(
+        &grid_text,
+        &grid,
+        &dict,
+        &config,
+        threads,
+        disallow_shared_substring,
+    )
 }
 
 /// Print grid/dict summary and warnings before starting a fill.
@@ -336,7 +352,10 @@ fn print_fill_header(
 ) {
     eprintln!(
         "Grid: {}x{}, {} slots, {} crossings",
-        grid.rows, grid.cols, grid.slots.len(), grid.crossings.len()
+        grid.rows,
+        grid.cols,
+        grid.slots.len(),
+        grid.crossings.len()
     );
     eprintln!("Dictionary: {} words", dict.total_words());
     if disallow_shared_substring > 0 {
@@ -520,7 +539,12 @@ fn run_parallel_with_display(
 
             eprintln!(
                 "[{}] {}/{} partitions | {} sol | {} | {} n/s",
-                bar, completed, total, total_sol, format_elapsed(elapsed), format_count(nps as u64),
+                bar,
+                completed,
+                total,
+                total_sol,
+                format_elapsed(elapsed),
+                format_count(nps as u64),
             );
 
             // Per-thread info
