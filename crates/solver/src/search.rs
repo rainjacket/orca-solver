@@ -551,7 +551,7 @@ where
     'descend: loop {
         state.stats.nodes += 1;
 
-        // Progress reporting
+        // Progress reporting (legacy stderr)
         if config.progress_interval > 0 && state.stats.nodes % config.progress_interval == 0 {
             eprintln!("[progress] {}", state.stats);
         }
@@ -561,14 +561,6 @@ where
         if let Some((timeout, start)) = split_state {
             if state.stats.nodes % 1_000 == 0 && start.elapsed() >= timeout {
                 sub_partitions = split_remaining_work(&mut stack, grid, grid_text.unwrap());
-                if !sub_partitions.is_empty() {
-                    eprintln!(
-                        "[split] Timeout after {:.1}s at {} nodes, split into {} sub-partitions",
-                        start.elapsed().as_secs_f64(),
-                        state.stats.nodes,
-                        sub_partitions.len(),
-                    );
-                }
                 split_state = None;
                 post_split = true;
             }

@@ -2,7 +2,7 @@
 //! as an independent rayon task with mid-search splitting for load balancing.
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 use orca_core::dict::Dictionary;
@@ -22,6 +22,37 @@ pub struct ParallelResult {
     pub exhausted: bool,
 }
 
+/// Shared progress state for multi-threaded search, readable by a display thread.
+pub struct ParallelProgress {
+    /// Per-thread description of the current partition (indexed by rayon thread index).
+    pub thread_descriptions: Vec<Mutex<String>>,
+    /// Number of partitions completed so far.
+    pub completed_partitions: AtomicU64,
+    /// Total partitions (increases when splits create sub-partitions).
+    pub total_partitions: AtomicU64,
+    /// Cumulative nodes across all completed partitions.
+    pub total_nodes: AtomicU64,
+    /// Cumulative solutions found.
+    pub total_solutions: AtomicU64,
+    /// Whether the search is still running.
+    pub running: AtomicBool,
+}
+
+impl ParallelProgress {
+    pub fn new(num_threads: usize) -> Self {
+        ParallelProgress {
+            thread_descriptions: (0..num_threads)
+                .map(|_| Mutex::new(String::new()))
+                .collect(),
+            completed_partitions: AtomicU64::new(0),
+            total_partitions: AtomicU64::new(0),
+            total_nodes: AtomicU64::new(0),
+            total_solutions: AtomicU64::new(0),
+            running: AtomicBool::new(true),
+        }
+    }
+}
+
 /// Run parallel search with partition splitting.
 ///
 /// Self-contained: parses the grid, generates partitions, then executes
@@ -32,6 +63,36 @@ pub fn solve_parallel(
     config: &SearchConfig,
     num_threads: usize,
     disallow_shared_substring: usize,
+) -> ParallelResult {
+    solve_parallel_inner(grid_text, dict, config, num_threads, disallow_shared_substring, None)
+}
+
+/// Like `solve_parallel`, but with shared progress state for a display thread.
+pub fn solve_parallel_with_progress(
+    grid_text: &str,
+    dict: &Dictionary,
+    config: &SearchConfig,
+    num_threads: usize,
+    disallow_shared_substring: usize,
+    progress: Arc<ParallelProgress>,
+) -> ParallelResult {
+    solve_parallel_inner(
+        grid_text,
+        dict,
+        config,
+        num_threads,
+        disallow_shared_substring,
+        Some(progress),
+    )
+}
+
+fn solve_parallel_inner(
+    grid_text: &str,
+    dict: &Dictionary,
+    config: &SearchConfig,
+    num_threads: usize,
+    disallow_shared_substring: usize,
+    progress: Option<Arc<ParallelProgress>>,
 ) -> ParallelResult {
     let mut stats = SolverStats::new();
     stats.start();
@@ -59,13 +120,19 @@ pub fn solve_parallel(
 
     let initial_count = partition_specs.len();
 
+    // Initialize progress tracking if provided
+    if let Some(ref p) = progress {
+        p.total_partitions
+            .store(initial_count as u64, Ordering::Relaxed);
+    }
+
     // Shared work queue with condvar for work-stealing
     let queue: Arc<(Mutex<VecDeque<PartitionSpec>>, Condvar)> =
         Arc::new((Mutex::new(VecDeque::from(partition_specs)), Condvar::new()));
     let active_workers = Arc::new(AtomicU64::new(0));
     let total_solutions = Arc::new(AtomicU64::new(0));
     let total_nodes = Arc::new(AtomicU64::new(0));
-    let total_splits = Arc::new(AtomicU64::new(0));
+
 
     // Collected results from all threads
     let results: Arc<Mutex<Vec<(Vec<(String, Vec<String>)>, SolverStats, bool)>>> =
@@ -79,19 +146,15 @@ pub fn solve_parallel(
 
     let split_timeout = config.split_timeout_secs;
 
-    eprintln!(
-        "[parallel] {} partitions across {} threads (split_timeout={}s)",
-        initial_count, num_threads, split_timeout,
-    );
-
     pool.scope(|s| {
         for _ in 0..num_threads {
             let queue = Arc::clone(&queue);
             let active_workers = Arc::clone(&active_workers);
             let total_solutions = Arc::clone(&total_solutions);
             let total_nodes = Arc::clone(&total_nodes);
-            let total_splits = Arc::clone(&total_splits);
+
             let results = Arc::clone(&results);
+            let progress = progress.clone();
             let config = SearchConfig {
                 max_solutions: config.max_solutions,
                 progress_interval: 0,
@@ -123,7 +186,19 @@ pub fn solve_parallel(
 
                     let spec = match spec {
                         Some(s) => s,
-                        None => return,
+                        None => {
+                            // Clear this thread's description when done
+                            if let Some(ref p) = progress {
+                                let thread_idx = rayon::current_thread_index().unwrap_or(0);
+                                if thread_idx < p.thread_descriptions.len() {
+                                    p.thread_descriptions[thread_idx]
+                                        .lock()
+                                        .unwrap()
+                                        .clear();
+                                }
+                            }
+                            return;
+                        }
                     };
 
                     // Check if we've found enough solutions
@@ -146,11 +221,21 @@ pub fn solve_parallel(
                         }
                     };
 
+                    // Update thread description for display
+                    if let Some(ref p) = progress {
+                        let thread_idx = rayon::current_thread_index().unwrap_or(0);
+                        if thread_idx < p.thread_descriptions.len() {
+                            *p.thread_descriptions[thread_idx].lock().unwrap() =
+                                spec.seed_desc.clone();
+                        }
+                    }
+
                     let grid_text_for_split = if split_timeout > 0 {
                         Some(spec.grid_text.as_str())
                     } else {
                         None
                     };
+
                     let result = solve_grid(
                         &part_grid,
                         dict,
@@ -172,7 +257,11 @@ pub fn solve_parallel(
                             });
                         }
                         drop(q);
-                        total_splits.fetch_add(count as u64, Ordering::Relaxed);
+
+                        if let Some(ref p) = progress {
+                            p.total_partitions
+                                .fetch_add(count as u64, Ordering::Relaxed);
+                        }
                         cvar.notify_all();
                     }
 
@@ -182,17 +271,13 @@ pub fn solve_parallel(
                     }
 
                     let nodes = result.stats.nodes;
-                    let prev = total_nodes.fetch_add(nodes, Ordering::Relaxed);
-                    if config.progress_interval > 0
-                        && (prev / config.progress_interval)
-                            != ((prev + nodes) / config.progress_interval)
-                    {
-                        let total = total_solutions.load(Ordering::Relaxed);
-                        eprintln!(
-                            "[parallel] ~{} nodes, {} solutions so far",
-                            prev + nodes,
-                            total,
-                        );
+                    total_nodes.fetch_add(nodes, Ordering::Relaxed);
+
+                    // Update progress counters for display thread
+                    if let Some(ref p) = progress {
+                        p.completed_partitions.fetch_add(1, Ordering::Relaxed);
+                        p.total_nodes.fetch_add(nodes, Ordering::Relaxed);
+                        p.total_solutions.fetch_add(sol_count, Ordering::Relaxed);
                     }
 
                     results.lock().unwrap().push((
@@ -210,12 +295,9 @@ pub fn solve_parallel(
         }
     });
 
-    let splits = total_splits.load(Ordering::Relaxed);
-    if splits > 0 {
-        eprintln!(
-            "[parallel] {} sub-partitions created by mid-search splitting",
-            splits
-        );
+    // Signal completion
+    if let Some(ref p) = progress {
+        p.running.store(false, Ordering::SeqCst);
     }
 
     // Merge results

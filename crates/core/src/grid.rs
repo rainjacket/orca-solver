@@ -373,6 +373,35 @@ impl Grid {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
+    /// Check whether the grid has diagonal symmetry: rows == cols and
+    /// for all (r,c), cell[r][c] and cell[c][r] are compatible across
+    /// the diagonal (same black/open type, and any pre-filled letters match).
+    pub fn has_diagonal_symmetry(&self) -> bool {
+        if self.rows != self.cols {
+            return false;
+        }
+        for r in 0..self.rows {
+            for c in (r + 1)..self.cols {
+                if !cells_diagonal_compatible(self.cells[r][c], self.cells[c][r]) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+}
+
+/// Two cells are diagonal-symmetry compatible: both black, or both non-black
+/// with matching seeds (pre-filled letters must be equal across the diagonal).
+fn cells_diagonal_compatible(a: Cell, b: Cell) -> bool {
+    match (a, b) {
+        (Cell::Black, Cell::Black) => true,
+        (Cell::Black, _) | (_, Cell::Black) => false,
+        (Cell::Letter(x), Cell::Letter(y)) => x == y,
+        (Cell::Letter(_), _) | (_, Cell::Letter(_)) => false,
+        _ => true,
+    }
 }
 
 /// Skip comment/empty lines and the dimensions line, returning only grid data rows.
@@ -638,5 +667,59 @@ mod tests {
         assert_eq!(lines[0], "CAT");
         assert_eq!(lines[1], "DOG");
         assert_eq!(lines[2], "RAT");
+    }
+
+    #[test]
+    fn test_diagonal_symmetry_square() {
+        // Black cells mirror across diagonal: (0,2) and (2,0)
+        let grid_str = "3 3\n..#\n...\n#..\n";
+        let grid = Grid::parse(grid_str).unwrap();
+        assert!(grid.has_diagonal_symmetry());
+    }
+
+    #[test]
+    fn test_diagonal_symmetry_all_open() {
+        let grid_str = "3 3\n...\n...\n...\n";
+        let grid = Grid::parse(grid_str).unwrap();
+        assert!(grid.has_diagonal_symmetry());
+    }
+
+    #[test]
+    fn test_diagonal_symmetry_asymmetric() {
+        // (0,2) is black but (2,0) is open
+        let grid_str = "3 3\n..#\n...\n...\n";
+        let grid = Grid::parse(grid_str).unwrap();
+        assert!(!grid.has_diagonal_symmetry());
+    }
+
+    #[test]
+    fn test_diagonal_symmetry_nonsquare() {
+        let grid_str = "3 4\n....\n....\n....\n";
+        let grid = Grid::parse(grid_str).unwrap();
+        assert!(!grid.has_diagonal_symmetry());
+    }
+
+    #[test]
+    fn test_diagonal_symmetry_matching_seeds() {
+        // Same letter at (0,1) and (1,0) — symmetric
+        let grid_str = "3 3\n.A.\nA..\n...\n";
+        let grid = Grid::parse(grid_str).unwrap();
+        assert!(grid.has_diagonal_symmetry());
+    }
+
+    #[test]
+    fn test_diagonal_symmetry_mismatched_seeds() {
+        // A at (0,1) but B at (1,0) — breaks symmetry
+        let grid_str = "3 3\n.A.\nB..\n...\n";
+        let grid = Grid::parse(grid_str).unwrap();
+        assert!(!grid.has_diagonal_symmetry());
+    }
+
+    #[test]
+    fn test_diagonal_symmetry_seed_vs_open() {
+        // A at (0,2) but open at (2,0) — breaks symmetry
+        let grid_str = "3 3\n..A\n...\n...\n";
+        let grid = Grid::parse(grid_str).unwrap();
+        assert!(!grid.has_diagonal_symmetry());
     }
 }

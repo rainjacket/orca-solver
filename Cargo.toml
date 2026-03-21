@@ -15,6 +15,8 @@ orca-solver = { path = "crates/solver" }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+crossterm = "0.28"
+dialoguer = "0.11"
 rayon = "1"
 
 [workspace.lints.clippy]

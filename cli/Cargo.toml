@@ -15,3 +15,5 @@ orca-core.workspace = true
 orca-solver.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+crossterm.workspace = true
+dialoguer.workspace = true

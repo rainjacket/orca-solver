@@ -1,12 +1,21 @@
+mod html_browser;
+
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 use std::process;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand};
+use crossterm::{cursor, execute, terminal};
 
 use orca_core::dict::Dictionary;
 use orca_core::grid::Grid;
-use orca_solver::{resolve_cell, solve_grid, solve_parallel, SearchConfig};
+use orca_solver::{
+    resolve_cell, solve_grid, solve_parallel, solve_parallel_with_progress, ParallelProgress,
+    SearchConfig,
+};
 
 #[derive(Parser)]
 #[command(
@@ -22,19 +31,22 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Fill a crossword grid with words from a dictionary.
+    ///
+    /// Run without arguments to enter interactive mode.
     #[command(after_help = "\
 Examples:
-  orca fill grid.grid words.dict              Find all solutions
-  orca fill grid.grid words.dict -n 1         Find first solution only
-  orca fill grid.grid words.dict -j 4         Use 4 threads
+  orca fill                                       Interactive mode
+  orca fill grid.txt words.dict                   Find all solutions
+  orca fill grid.grid words.dict -n 1             Find first solution only
+  orca fill grid.grid words.dict -j 4             Use 4 threads
   orca fill grid.grid words.dict -n 0 --disallow-shared-substring 0
-                                              Exhaustive, no substring constraint")]
+                                                  Exhaustive, no substring constraint")]
     Fill {
-        /// Path to the .grid file.
-        grid: PathBuf,
+        /// Path to the grid file (.grid or .txt format).
+        grid: Option<PathBuf>,
 
-        /// Path to the .dict file.
-        dict: PathBuf,
+        /// Path to the dictionary/wordlist file (.dict format: WORD;SCORE per line).
+        dict: Option<PathBuf>,
 
         /// Maximum number of solutions to find (0 = unlimited).
         #[arg(short = 'n', long, default_value = "0")]
@@ -72,10 +84,10 @@ Examples:
 Examples:
   orca info grid.grid words.dict")]
     Info {
-        /// Path to the .grid file.
+        /// Path to the grid file (.grid or .txt format).
         grid: PathBuf,
 
-        /// Path to the .dict file.
+        /// Path to the dictionary/wordlist file.
         dict: PathBuf,
     },
 
@@ -84,7 +96,7 @@ Examples:
 Examples:
   orca validate-dict words.dict")]
     ValidateDict {
-        /// Path to the .dict file.
+        /// Path to the dictionary/wordlist file.
         dict: PathBuf,
     },
 }
@@ -94,7 +106,10 @@ fn main() {
 
     let result = match cli.command {
         Commands::Fill {
-            grid,
+            grid: None, dict: _, ..
+        } => interactive_fill(),
+        Commands::Fill {
+            grid: Some(grid_path),
             dict,
             max_solutions,
             progress_interval,
@@ -102,16 +117,26 @@ fn main() {
             symmetry_break,
             threads,
             split_timeout,
-        } => cmd_fill(
-            grid,
-            dict,
-            max_solutions,
-            progress_interval,
-            disallow_shared_substring,
-            symmetry_break,
-            threads,
-            split_timeout,
-        ),
+        } => {
+            let dict_path = match dict {
+                Some(d) => d,
+                None => {
+                    eprintln!("Error: dictionary path is required when grid path is provided.");
+                    eprintln!("Run `orca fill` without arguments for interactive mode.");
+                    process::exit(1);
+                }
+            };
+            cmd_fill(
+                grid_path,
+                dict_path,
+                max_solutions,
+                progress_interval,
+                disallow_shared_substring,
+                symmetry_break,
+                threads,
+                split_timeout,
+            )
+        }
         Commands::Info { grid, dict } => cmd_info(grid, dict),
         Commands::ValidateDict { dict } => cmd_validate_dict(dict),
     };
@@ -121,6 +146,123 @@ fn main() {
         process::exit(1);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Interactive mode
+// ---------------------------------------------------------------------------
+
+fn interactive_fill() -> Result<()> {
+    use dialoguer::{Confirm, Input};
+
+    eprintln!("Orca Interactive Mode");
+    eprintln!("=====================\n");
+
+    // 1. Grid file — load eagerly to validate and inform later prompts
+    let grid_path: String = Input::new()
+        .with_prompt("Grid file path (.grid or .txt)")
+        .interact_text()?;
+    let grid_path = expand_path(grid_path.trim());
+
+    let grid_text = std::fs::read_to_string(&grid_path).context("Failed to read grid file")?;
+    let grid = Grid::parse(&grid_text).context("Failed to parse grid")?;
+    eprintln!(
+        "  Loaded: {}x{}, {} slots, {} crossings\n",
+        grid.rows,
+        grid.cols,
+        grid.slots.len(),
+        grid.crossings.len()
+    );
+
+    // 2. Dictionary — load eagerly to validate and show stats
+    let dict_path: String = Input::new()
+        .with_prompt("Dictionary/wordlist file path")
+        .interact_text()?;
+    let dict_path = expand_path(dict_path.trim());
+
+    let dict = Dictionary::load(&dict_path).context("Failed to load dictionary")?;
+    eprintln!("  Loaded: {} words\n", dict.total_words());
+
+    // 3. Threads
+    let threads: usize = Input::new()
+        .with_prompt("Number of threads (1 = sequential)")
+        .default(1)
+        .interact_text()?;
+
+    // 4. Max solutions
+    let max_solutions: u64 = Input::new()
+        .with_prompt("Max solutions (0 = unlimited)")
+        .default(0u64)
+        .interact_text()?;
+
+    // 5. Shared substring constraint
+    let disallow_shared_substring: usize = Input::new()
+        .with_prompt("Disallow shared substring length (0 = disabled)")
+        .default(6usize)
+        .interact_text()?;
+
+    // 6. Symmetry break (only if grid has diagonal symmetry)
+    let symmetry_break_cells = if grid.has_diagonal_symmetry() {
+        let use_sym = Confirm::new()
+            .with_prompt(
+                "Grid has diagonal symmetry. Enable symmetry breaking? (halves search space)",
+            )
+            .default(true)
+            .interact()?;
+        if use_sym {
+            auto_detect_symmetry_break(&grid)
+                .map(|s| parse_symmetry_break(&s, &grid))
+                .transpose()?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    eprintln!();
+
+    let split_timeout_secs = if threads > 1 { 3 } else { 0 };
+
+    let config = SearchConfig {
+        max_solutions,
+        progress_interval: 0,
+        symmetry_break_cells,
+        split_timeout_secs,
+    };
+
+    print_fill_header(&grid, &dict, &config, disallow_shared_substring, threads);
+    run_fill(&grid_text, &grid, &dict, &config, threads, disallow_shared_substring)
+}
+
+/// Expand `~` at the start of a path to the user's home directory.
+fn expand_path(s: &str) -> PathBuf {
+    if let Some(rest) = s.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(rest);
+        }
+    }
+    PathBuf::from(s)
+}
+
+/// Find the first pair of diagonally-mirrored cells suitable for symmetry breaking.
+fn auto_detect_symmetry_break(grid: &Grid) -> Option<String> {
+    for r in 0..grid.rows {
+        for c in (r + 1)..grid.cols {
+            if grid.cells[r][c].is_constrained()
+                && grid.cells[c][r].is_constrained()
+                && resolve_cell(grid, r, c).is_some()
+                && resolve_cell(grid, c, r).is_some()
+            {
+                return Some(format!("{},{},{},{}", r, c, c, r));
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Fill command
+// ---------------------------------------------------------------------------
 
 /// Parse "r1,c1,r2,c2" into four coordinates.
 fn parse_cell_pair(s: &str) -> Result<(usize, usize, usize, usize)> {
@@ -151,6 +293,7 @@ fn parse_symmetry_break(
     Ok((cell_a, cell_b))
 }
 
+/// CLI entry point: load files from paths, then delegate to `run_fill`.
 fn cmd_fill(
     grid_path: PathBuf,
     dict_path: PathBuf,
@@ -170,38 +313,6 @@ fn cmd_fill(
         .map(|s| parse_symmetry_break(s, &grid))
         .transpose()?;
 
-    eprintln!(
-        "Grid: {}x{}, {} slots, {} crossings",
-        grid.rows,
-        grid.cols,
-        grid.slots.len(),
-        grid.crossings.len()
-    );
-    eprintln!("Dictionary: {} words", dict.total_words());
-    if disallow_shared_substring > 0 {
-        eprintln!(
-            "Shared substring constraint: no two entries share a {}+ letter substring",
-            disallow_shared_substring
-        );
-    }
-    if let Some((ref ca, ref cb)) = symmetry_break_cells {
-        eprintln!(
-            "Symmetry breaking: cell at slot {}[{}] <= cell at slot {}[{}]",
-            ca.slot_id, ca.pos_in_slot, cb.slot_id, cb.pos_in_slot
-        );
-    }
-
-    // Check that all slot lengths have dictionary entries
-    for (i, slot) in grid.slots.iter().enumerate() {
-        if slot.constrained && dict.bucket(slot.len).is_none() {
-            eprintln!(
-                "Warning: no dictionary words of length {} for slot {} ({} at {:?})",
-                slot.len, i, slot.direction, slot.start
-            );
-        }
-    }
-
-    // Default split timeout: 3s for parallel, 0 for sequential
     let split_timeout_secs = split_timeout.unwrap_or(if threads > 1 { 3 } else { 0 });
 
     let config = SearchConfig {
@@ -211,18 +322,76 @@ fn cmd_fill(
         split_timeout_secs,
     };
 
-    let (solutions, stats, exhausted) = if threads > 1 {
-        eprintln!("Using {} threads for parallel search", threads);
-        let r = solve_parallel(
-            &grid_text,
-            &dict,
-            &config,
-            threads,
-            disallow_shared_substring,
+    print_fill_header(&grid, &dict, &config, disallow_shared_substring, threads);
+    run_fill(&grid_text, &grid, &dict, &config, threads, disallow_shared_substring)
+}
+
+/// Print grid/dict summary and warnings before starting a fill.
+fn print_fill_header(
+    grid: &Grid,
+    dict: &Dictionary,
+    config: &SearchConfig,
+    disallow_shared_substring: usize,
+    threads: usize,
+) {
+    eprintln!(
+        "Grid: {}x{}, {} slots, {} crossings",
+        grid.rows, grid.cols, grid.slots.len(), grid.crossings.len()
+    );
+    eprintln!("Dictionary: {} words", dict.total_words());
+    if disallow_shared_substring > 0 {
+        eprintln!(
+            "Shared substring constraint: no two entries share a {}+ letter substring",
+            disallow_shared_substring
         );
+    }
+    if let Some((ref ca, ref cb)) = config.symmetry_break_cells {
+        eprintln!(
+            "Symmetry breaking: cell at slot {}[{}] <= cell at slot {}[{}]",
+            ca.slot_id, ca.pos_in_slot, cb.slot_id, cb.pos_in_slot
+        );
+    }
+    for (i, slot) in grid.slots.iter().enumerate() {
+        if slot.constrained && dict.bucket(slot.len).is_none() {
+            eprintln!(
+                "Warning: no dictionary words of length {} for slot {} ({} at {:?})",
+                slot.len, i, slot.direction, slot.start
+            );
+        }
+    }
+    if threads > 1 {
+        eprintln!("Using {} threads for parallel search", threads);
+    }
+}
+
+/// Core fill logic shared by `cmd_fill` and `interactive_fill`.
+fn run_fill(
+    grid_text: &str,
+    grid: &Grid,
+    dict: &Dictionary,
+    config: &SearchConfig,
+    threads: usize,
+    disallow_shared_substring: usize,
+) -> Result<()> {
+    let is_tty = std::io::stderr().is_terminal();
+
+    // Disable legacy per-node progress lines when using live display
+    let config = if is_tty && config.progress_interval > 0 {
+        SearchConfig {
+            progress_interval: 0,
+            ..config.clone()
+        }
+    } else {
+        config.clone()
+    };
+
+    let (solutions, stats, exhausted) = if threads > 1 && is_tty {
+        run_parallel_with_display(grid_text, dict, &config, threads, disallow_shared_substring)
+    } else if threads > 1 {
+        let r = solve_parallel(grid_text, dict, &config, threads, disallow_shared_substring);
         (r.solutions, r.stats, r.exhausted)
     } else {
-        let r = solve_grid(&grid, &dict, &config, disallow_shared_substring, None);
+        let r = solve_grid(grid, dict, &config, disallow_shared_substring, None);
         (r.solutions, r.stats, r.exhausted)
     };
 
@@ -239,8 +408,158 @@ fn cmd_fill(
     }
     eprintln!("Final stats: {}", stats);
 
+    // Generate HTML browser if we have solutions
+    if !solutions.is_empty() {
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let html_path = PathBuf::from(format!("solutions_{}.html", timestamp));
+        html_browser::generate_html_browser(&solutions, grid.rows, grid.cols, &html_path)?;
+        eprintln!("Solution browser: {}", html_path.display());
+    }
+
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Live progress display
+// ---------------------------------------------------------------------------
+
+/// Format elapsed seconds as a human-readable duration.
+fn format_elapsed(secs: f64) -> String {
+    if secs < 60.0 {
+        format!("{:.1}s", secs)
+    } else if secs < 3600.0 {
+        format!("{}m{:02}s", secs as u64 / 60, secs as u64 % 60)
+    } else {
+        format!(
+            "{}h{:02}m{:02}s",
+            secs as u64 / 3600,
+            (secs as u64 % 3600) / 60,
+            secs as u64 % 60
+        )
+    }
+}
+
+/// Format a count for display (1234567 -> "1.2M", 45678 -> "45.7K").
+fn format_count(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 10_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
+}
+
+/// Clear N lines of previously printed terminal output.
+fn clear_display(stderr: &mut std::io::Stderr, lines: u16) {
+    if lines > 0 {
+        execute!(
+            stderr,
+            cursor::MoveUp(lines),
+            terminal::Clear(terminal::ClearType::FromCursorDown)
+        )
+        .ok();
+    }
+}
+
+/// Run parallel search with live terminal display (progress bar + per-thread info).
+fn run_parallel_with_display(
+    grid_text: &str,
+    dict: &Dictionary,
+    config: &SearchConfig,
+    num_threads: usize,
+    disallow_shared_substring: usize,
+) -> (Vec<(String, Vec<String>)>, orca_solver::SolverStats, bool) {
+    let progress = Arc::new(ParallelProgress::new(num_threads));
+
+    // Spawn display thread
+    let display_progress = Arc::clone(&progress);
+    let display_handle = std::thread::spawn(move || {
+        let mut stderr = std::io::stderr();
+        let mut lines_printed = 0u16;
+        let start = std::time::Instant::now();
+
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+
+            if !display_progress.running.load(Ordering::SeqCst) {
+                clear_display(&mut stderr, lines_printed);
+                break;
+            }
+
+            let completed = display_progress
+                .completed_partitions
+                .load(Ordering::Relaxed);
+            let total = display_progress.total_partitions.load(Ordering::Relaxed);
+
+            if total == 0 {
+                continue;
+            }
+
+            clear_display(&mut stderr, lines_printed);
+
+            // Progress bar
+            let pct = (completed as f64 / total as f64 * 100.0).min(100.0);
+            let bar_width = 30;
+            let filled = (pct / 100.0 * bar_width as f64) as usize;
+            let bar: String = "=".repeat(filled)
+                + if filled < bar_width { ">" } else { "" }
+                + &" ".repeat(bar_width.saturating_sub(filled + 1));
+
+            let total_sol = display_progress.total_solutions.load(Ordering::Relaxed);
+            let total_nodes = display_progress.total_nodes.load(Ordering::Relaxed);
+            let elapsed = start.elapsed().as_secs_f64();
+            let nps = if elapsed > 0.0 {
+                total_nodes as f64 / elapsed
+            } else {
+                0.0
+            };
+
+            eprintln!(
+                "[{}] {}/{} partitions | {} sol | {} | {} n/s",
+                bar, completed, total, total_sol, format_elapsed(elapsed), format_count(nps as u64),
+            );
+
+            // Per-thread info
+            let mut count = 1u16;
+            for (i, desc_mutex) in display_progress.thread_descriptions.iter().enumerate() {
+                if let Ok(guard) = desc_mutex.lock() {
+                    if guard.is_empty() {
+                        eprintln!("T{}: idle", i);
+                    } else {
+                        eprintln!("T{}: {}", i, *guard);
+                    }
+                } else {
+                    eprintln!("T{}: idle", i);
+                }
+                count += 1;
+            }
+            lines_printed = count;
+            stderr.flush().ok();
+        }
+    });
+
+    let r = solve_parallel_with_progress(
+        grid_text,
+        dict,
+        config,
+        num_threads,
+        disallow_shared_substring,
+        Arc::clone(&progress),
+    );
+
+    progress.running.store(false, Ordering::SeqCst);
+    display_handle.join().ok();
+
+    (r.solutions, r.stats, r.exhausted)
+}
+
+// ---------------------------------------------------------------------------
+// Info & validate commands
+// ---------------------------------------------------------------------------
 
 fn cmd_info(grid_path: PathBuf, dict_path: PathBuf) -> Result<()> {
     let grid = Grid::load(&grid_path).context("Failed to load grid")?;
@@ -249,7 +568,6 @@ fn cmd_info(grid_path: PathBuf, dict_path: PathBuf) -> Result<()> {
     println!("Grid: {}x{}", grid.rows, grid.cols);
     println!("{}", grid);
 
-    // Count crossings per slot from the flat crossings list
     let mut crossings_per_slot = vec![0usize; grid.slots.len()];
     for c in &grid.crossings {
         crossings_per_slot[c.slot_a] += 1;

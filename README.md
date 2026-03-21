@@ -22,15 +22,20 @@ cargo build --release
 ## Quick start
 
 ```bash
+# Interactive mode — prompts for all options
+orca fill
+
 # Find all solutions
-orca fill my_grid.grid my_words.dict
+orca fill my_grid.txt my_words.dict
 
 # Find first solution only
 orca fill my_grid.grid my_words.dict -n 1
 
-# Use 4 threads
+# Use 4 threads (with live progress display)
 orca fill my_grid.grid my_words.dict -j 4
 ```
+
+When run with multiple (2 or more) threads on a terminal, Orca shows a live progress display with a partition progress bar and per-thread status. When solutions are found, an HTML solution browser is automatically generated for reviewing and comparing fills.
 
 ## Dictionary
 
@@ -50,7 +55,7 @@ WORD;SCORE
 
 ## Grid format
 
-Orca uses `.grid` files. The first non-comment line is `rows cols`, followed by the grid:
+Grid files can use `.grid` or `.txt` extensions. The first non-comment line is `rows cols`, followed by the grid:
 
 ```
 # This is a comment
@@ -73,6 +78,10 @@ Orca uses `.grid` files. The first non-comment line is `rows cols`, followed by 
 Comments (lines starting with `#`) are only allowed before the dimensions line.
 
 ## CLI reference
+
+### `orca fill`
+
+Run without arguments to enter interactive mode, which prompts for all options and auto-detects features like diagonal symmetry breaking.
 
 ### `orca fill <GRID> <DICT>`
 
