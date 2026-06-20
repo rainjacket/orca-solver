@@ -1,5 +1,5 @@
 //! Constraint graph: per-slot adjacency lists built from grid crossings.
-//! Crossings are sorted by length-sum (descending) for the bounded
+//! Crossings are sorted by cell scan-tier then length-sum for the bounded
 //! crossing scan in the solver's branching heuristic.
 
 use orca_core::grid::{Crossing, Grid};
@@ -21,16 +21,19 @@ impl ConstraintGraph {
         let num_slots = grid.slots.len();
         let mut crossings = grid.crossings.clone();
 
-        // Sort crossings by length-sum (descending): sum of the lengths of
-        // both participating slots. (On valid crossword grids, crossing_count
-        // == slot.len for all constrained slots, so this is equivalent to
-        // sorting by sum of crossing counts.) Longer-slot crossings are
-        // evaluated first by the bounded scan in find_best_crossing().
+        // Sort crossings by cell scan-tier (ascending), then length-sum
+        // (descending) -- the sum of both slots' lengths. The bounded scan in
+        // find_best_crossing() thus visits lower tiers, and longer slots within a
+        // tier, first.
         let slot_len = grid.slots.iter().map(|s| s.len).collect::<Vec<_>>();
         crossings.sort_by(|a, b| {
-            let score_a = slot_len[a.slot_a] + slot_len[a.slot_b];
-            let score_b = slot_len[b.slot_a] + slot_len[b.slot_b];
-            score_b.cmp(&score_a) // descending
+            let len_a = slot_len[a.slot_a] + slot_len[a.slot_b];
+            let len_b = slot_len[b.slot_a] + slot_len[b.slot_b];
+            let (ra, ca) = grid.slots[a.slot_a].cells[a.pos_in_a];
+            let (rb, cb) = grid.slots[b.slot_a].cells[b.pos_in_a];
+            let tier_a = grid.scan_tier[ra][ca];
+            let tier_b = grid.scan_tier[rb][cb];
+            tier_a.cmp(&tier_b).then_with(|| len_b.cmp(&len_a))
         });
 
         let mut neighbors: Vec<Vec<(usize, bool)>> = vec![Vec::new(); num_slots];
