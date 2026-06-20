@@ -82,10 +82,9 @@ Comments (lines starting with `#`) are only allowed before the dimensions line.
 
 A white cell may be a digit `0`-`9` instead of `.`, tagging it with a *scan-order tier*.
 Crossings are sorted by tier (`0` first, then `1` … `9`, then untiered `.` cells), nudging
-the solver to fill lower-tier cells earlier. This is a bias, not a strict branch order:
-the heuristic scans only a bounded window of crossings (the scan limit) before picking
-one, so tiers shift the order without enforcing it. A digit cell is otherwise an ordinary
-empty cell, and a grid with no digits is unaffected. See
+the solver to fill lower-tier cells earlier. This is a bias, not a strict branch order: the
+branch heuristic scans a window of crossings (the scan limit), which may span multiple
+tiers. A digit cell is otherwise an ordinary empty cell. See
 [`grids/bench_corner.grid`](grids/bench_corner.grid) for an example.
 
 ## CLI reference
