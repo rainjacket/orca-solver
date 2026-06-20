@@ -1,8 +1,6 @@
 //! Constraint graph: per-slot adjacency lists built from grid crossings.
-//! Crossings are sorted by cell scan-tier (ascending) then length-sum (descending)
-//! for the bounded crossing scan in the solver's branching heuristic. With no
-//! `0`-`9` tier cells in the grid, every cell is untiered and the order is pure
-//! length-sum (the legacy behavior).
+//! Crossings are sorted by cell scan-tier then length-sum for the bounded
+//! crossing scan in the solver's branching heuristic.
 
 use orca_core::grid::{Crossing, Grid};
 
@@ -23,14 +21,10 @@ impl ConstraintGraph {
         let num_slots = grid.slots.len();
         let mut crossings = grid.crossings.clone();
 
-        // Sort crossings primarily by the ascending scan tier of their cell
-        // (`grid.scan_tier`), then by length-sum (descending): the sum of the two
-        // participating slots' lengths, so longer-slot crossings are scanned first
-        // within a tier. A crossing's cell is `slot_a.cells[pos_in_a]`. With no
-        // `0`-`9` tier cells the tier key is constant (all UNTIERED) and the order
-        // collapses to pure length-sum — the legacy behavior. This sort MUST run
-        // before `neighbors` is built below, since neighbor entries store indices
-        // into this order.
+        // Sort crossings by cell scan-tier (ascending), then length-sum
+        // (descending) -- the sum of both slots' lengths. The bounded scan in
+        // find_best_crossing() thus visits lower tiers, and longer slots within a
+        // tier, first.
         let slot_len = grid.slots.iter().map(|s| s.len).collect::<Vec<_>>();
         crossings.sort_by(|a, b| {
             let len_a = slot_len[a.slot_a] + slot_len[a.slot_b];

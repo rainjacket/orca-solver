@@ -85,7 +85,7 @@ Crossings are sorted by tier (`0` first, then `1` … `9`, then untiered `.` cel
 the solver to fill lower-tier cells earlier. This is a bias, not a strict branch order:
 the heuristic scans only a bounded window of crossings (the scan limit) before picking
 one, so tiers shift the order without enforcing it. A digit cell is otherwise an ordinary
-empty cell, and a grid with no digits behaves exactly as before. See
+empty cell, and a grid with no digits is unaffected. See
 [`grids/bench_corner.grid`](grids/bench_corner.grid) for an example.
 
 ## CLI reference
