@@ -41,6 +41,10 @@ where `count_across[L]` is the number of across-slot candidates with letter L at
 
 Crossings between longer slots are evaluated first (via a static sort by length sum), since these tend to be more constraining. The bounded scan of 15 crossings balances evaluation cost against selection quality.
 
+### Scan-order tiers
+
+The static crossing sort can be biased per cell. If grid cells are tagged with scan-order tier digits (`0`-`9`; see the grid format), the sort key becomes `(cell tier ascending, length sum descending)`, so all of one tier's crossings are considered before the next tier's. This lets a grid steer the solver to complete one region before another. With no tier digits, every cell is untiered and the order is the plain length-sum sort above (unchanged).
+
 ## Iterative search with forced-move inlining
 
 The search uses an explicit stack rather than recursion, avoiding stack overflow on deep search trees. When a cell has exactly one viable letter, it is applied inline without creating a stack frame or trail entry -- its domain save is folded into the parent branch's trail. This prevents memory blowup on long chains of forced moves.

@@ -1,5 +1,12 @@
 //! Crossword grid representation: cells, slots, and crossings.
 //! Parses `.grid` files and extracts the constraint structure needed by the solver.
+//!
+//! Grid cell characters: `#` block, `.` empty (fillable), `*` wild (ignored by the
+//! solver), `A`-`Z` pre-filled letter, `[AEI]` subset constraint, and `0`-`9` an
+//! empty cell tagged with a static scan-order tier — tier 0 is branched before
+//! tier 1 before … before tier 9, then untiered `.` cells. Tiers let a grid steer
+//! the solver to complete one region before another (within a tier, the usual
+//! length-sum order applies). A grid with no digits behaves exactly as before.
 
 use anyhow::{bail, Context, Result};
 use std::fmt;
@@ -87,9 +94,17 @@ fn is_comment_line(line: &str) -> bool {
     line.starts_with("# ") || line == "#"
 }
 
+/// Scan-order tier for a cell with no explicit digit (`.`, blocks, wilds, pre-filled
+/// letters, subsets). Untiered cells sort AFTER all digit-tiered cells (0-9).
+pub const UNTIERED: u8 = u8::MAX;
+
 /// Parse a single grid row, handling bracket notation [AEIOU] for subset constraints.
-fn parse_grid_row(line: &str) -> Result<Vec<Cell>> {
+/// Returns the row's cells and a parallel per-cell scan tier (0-9 for a digit cell,
+/// else `UNTIERED`). Digit cells parse to `Cell::Fill` — the tier is metadata used
+/// only by the constraint-graph crossing order, so the solver treats them as empties.
+fn parse_grid_row(line: &str) -> Result<(Vec<Cell>, Vec<u8>)> {
     let mut cells = Vec::new();
+    let mut tiers = Vec::new();
     let mut chars = line.chars().peekable();
     while let Some(&ch) = chars.peek() {
         if ch == '[' {
@@ -119,6 +134,7 @@ fn parse_grid_row(line: &str) -> Result<Vec<Cell>> {
             } else {
                 cells.push(Cell::Subset(mask));
             }
+            tiers.push(UNTIERED);
         } else {
             chars.next();
             cells.push(match ch {
@@ -126,11 +142,19 @@ fn parse_grid_row(line: &str) -> Result<Vec<Cell>> {
                 '.' => Cell::Fill,
                 '*' => Cell::Wild,
                 'A'..='Z' => Cell::Letter(ch as u8 - b'A'),
+                // A digit is an empty cell tagged with a static scan-order tier:
+                // tier 0 is branched before 1 before … before 9, then untiered cells.
+                '0'..='9' => Cell::Fill,
                 _ => bail!("Invalid grid character: '{}'", ch),
+            });
+            tiers.push(if ch.is_ascii_digit() {
+                ch as u8 - b'0'
+            } else {
+                UNTIERED
             });
         }
     }
-    Ok(cells)
+    Ok((cells, tiers))
 }
 
 /// Returns byte ranges for each cell token in a grid data line.
@@ -164,6 +188,11 @@ pub struct Grid {
     pub rows: usize,
     pub cols: usize,
     pub cells: Vec<Vec<Cell>>,
+    /// Per-cell static scan-order tier (0-9 from a digit cell, else `UNTIERED`),
+    /// mirroring `cells`. Crossings sort primarily by the ascending tier of their
+    /// cell so lower-tier regions are branched first; `UNTIERED` cells sort last.
+    /// An all-`UNTIERED` grid (no digits) collapses to the legacy length-sum order.
+    pub scan_tier: Vec<Vec<u8>>,
     pub slots: Vec<Slot>,
     pub crossings: Vec<Crossing>,
 }
@@ -211,14 +240,17 @@ impl Grid {
             bail!("Expected {} rows of grid data, got {}", rows, lines.len());
         }
 
-        // Parse cells (supports bracket notation: [AEIOU] for subset constraints)
+        // Parse cells (supports bracket notation [AEIOU] for subsets and 0-9 scan
+        // tiers) into parallel cell + tier grids.
         let mut cells = Vec::with_capacity(rows);
+        let mut scan_tier = Vec::with_capacity(rows);
         for (r, line) in lines.iter().enumerate() {
-            let row = parse_grid_row(line).with_context(|| format!("Row {}", r))?;
+            let (row, tier_row) = parse_grid_row(line).with_context(|| format!("Row {}", r))?;
             if row.len() != cols {
                 bail!("Row {} has {} columns, expected {}", r, row.len(), cols);
             }
             cells.push(row);
+            scan_tier.push(tier_row);
         }
 
         // Extract slots (across then down)
@@ -335,6 +367,7 @@ impl Grid {
             rows,
             cols,
             cells,
+            scan_tier,
             slots,
             crossings,
         })
@@ -589,6 +622,26 @@ mod tests {
         let grid = Grid::parse(grid_str).unwrap();
         assert_eq!(grid.cells[0][0], Cell::Letter(0)); // A
         assert_eq!(grid.cells[2][2], Cell::Letter(2)); // C
+    }
+
+    #[test]
+    fn test_scan_tier_digits() {
+        // Digits are empty (Fill) cells carrying a static scan-order tier; '.' is
+        // untiered (sorts last). Non-fill cells are untiered.
+        let grid = Grid::parse("1 5\n0.9.#\n").unwrap();
+        assert_eq!(grid.cells[0][0], Cell::Fill); // digit parses to Fill
+        assert_eq!(grid.cells[0][2], Cell::Fill);
+        assert_eq!(grid.scan_tier[0][0], 0);
+        assert_eq!(grid.scan_tier[0][1], UNTIERED); // '.'
+        assert_eq!(grid.scan_tier[0][2], 9);
+        assert_eq!(grid.scan_tier[0][3], UNTIERED); // '.'
+        assert_eq!(grid.scan_tier[0][4], UNTIERED); // '#'
+                                                    // A digit cell is constrained like any empty fillable cell.
+        let g2 = Grid::parse("1 3\n0.1\n").unwrap();
+        assert!(g2.slots[0].constrained);
+        // A grid with no digits is entirely untiered (legacy behavior).
+        let g3 = Grid::parse("1 3\n...\n").unwrap();
+        assert!(g3.scan_tier[0].iter().all(|&t| t == UNTIERED));
     }
 
     #[test]
