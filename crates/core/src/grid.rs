@@ -3,10 +3,10 @@
 //!
 //! Grid cell characters: `#` block, `.` empty (fillable), `*` wild (ignored by the
 //! solver), `A`-`Z` pre-filled letter, `[AEI]` subset constraint, and `0`-`9` an
-//! empty cell tagged with a static scan-order tier — tier 0 is branched before
-//! tier 1 before … before tier 9, then untiered `.` cells. Tiers let a grid steer
-//! the solver to complete one region before another (within a tier, the usual
-//! length-sum order applies). A grid with no digits behaves exactly as before.
+//! empty cell tagged with a static scan-order tier — tier 0 is scanned before
+//! tier 1 before … before tier 9, then untiered `.` cells. This biases the bounded
+//! crossing scan (it is not a strict branch order). A grid with no digits behaves
+//! exactly as before.
 
 use anyhow::{bail, Context, Result};
 use std::fmt;
@@ -190,7 +190,7 @@ pub struct Grid {
     pub cells: Vec<Vec<Cell>>,
     /// Per-cell static scan-order tier (0-9 from a digit cell, else `UNTIERED`),
     /// mirroring `cells`. Crossings sort primarily by the ascending tier of their
-    /// cell so lower-tier regions are branched first; `UNTIERED` cells sort last.
+    /// cell so lower-tier regions are scanned first; `UNTIERED` cells sort last.
     /// An all-`UNTIERED` grid (no digits) collapses to the legacy length-sum order.
     pub scan_tier: Vec<Vec<u8>>,
     pub slots: Vec<Slot>,
