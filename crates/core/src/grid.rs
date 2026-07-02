@@ -50,6 +50,7 @@ impl fmt::Display for Direction {
 }
 
 /// A slot is a maximal run of non-black cells in a row or column.
+/// Only runs of 3+ cells become slots: shorter runs are not filled or checked.
 /// A slot's index in `Grid::slots` serves as its unique identifier.
 #[derive(Debug, Clone)]
 pub struct Slot {
@@ -62,9 +63,17 @@ pub struct Slot {
     pub cells: Vec<(usize, usize)>,
     /// Whether this slot is constrained (has at least one Fill, Letter, or Subset cell).
     pub constrained: bool,
-    /// Check-only slot: constrained but should not be enumerated during search.
+    /// Check-only slot: constrained but never enumerated during search.
     /// True for slots spanning both constrained and wild cells (tendrils into
-    /// corners) — we verify their domain is non-empty but don't assign words to them.
+    /// corners). Its domain propagates like any other — an empty domain kills
+    /// the branch — but the search never assigns it a word.
+    ///
+    /// If a solution leaves a check-only slot with exactly one candidate, that
+    /// forced word is deliberately treated as part of the fill: it participates
+    /// in the duplicate-word and shared-substring checks (and can veto the
+    /// fill), and its letters are shown in the wild cells of the output. With
+    /// two or more candidates remaining, the slot is ignored by validation and
+    /// its wild cells print as `*`.
     pub check_only: bool,
     /// Pre-filled pattern: `Some(mask)` for constrained cells, `None` for unknowns.
     /// Single letter: `Some(1 << letter_index)`. Subset: `Some(mask)` with multiple bits.
@@ -100,18 +109,19 @@ fn parse_grid_row(line: &str) -> Result<(Vec<Cell>, Vec<u8>)> {
         if ch == '[' {
             chars.next(); // consume '['
             let mut mask = 0u32;
-            let mut count = 0u32;
             loop {
                 match chars.next() {
                     Some(']') => break,
                     Some(c) if c.is_ascii_uppercase() => {
                         mask |= 1u32 << (c as u8 - b'A');
-                        count += 1;
                     }
                     Some(c) => bail!("Invalid character '{}' in bracket notation", c),
                     None => bail!("Unclosed bracket notation"),
                 }
             }
+            // Count distinct letters (repeats like [AA] must not defeat
+            // the single-letter normalization below).
+            let count = mask.count_ones();
             if count == 0 {
                 bail!("Empty bracket notation");
             } else if count == 1 {
@@ -394,7 +404,7 @@ impl Grid {
     }
 
     /// Check whether the grid has diagonal symmetry: rows == cols and
-    /// for all (r,c), cell[r][c] and cell[c][r] are compatible across
+    /// for all (r,c), `cell[r][c]` and `cell[c][r]` are compatible across
     /// the diagonal (same black/open type, and any pre-filled letters match).
     pub fn has_diagonal_symmetry(&self) -> bool {
         if self.rows != self.cols {
@@ -411,15 +421,18 @@ impl Grid {
     }
 }
 
-/// Two cells are diagonal-symmetry compatible: both black, or both non-black
-/// with matching seeds (pre-filled letters must be equal across the diagonal).
+/// Two cells are diagonal-symmetry compatible: structurally identical across
+/// the transpose. Mixed kinds (e.g. Wild vs Fill, or differing subset masks)
+/// change the constraint structure, so a transposed fill would not be
+/// equivalent and symmetry breaking would prune valid solutions.
 fn cells_diagonal_compatible(a: Cell, b: Cell) -> bool {
     match (a, b) {
         (Cell::Black, Cell::Black) => true,
-        (Cell::Black, _) | (_, Cell::Black) => false,
+        (Cell::Fill, Cell::Fill) => true,
+        (Cell::Wild, Cell::Wild) => true,
         (Cell::Letter(x), Cell::Letter(y)) => x == y,
-        (Cell::Letter(_), _) | (_, Cell::Letter(_)) => false,
-        _ => true,
+        (Cell::Subset(x), Cell::Subset(y)) => x == y,
+        _ => false,
     }
 }
 
@@ -757,5 +770,78 @@ mod tests {
         let grid_str = "3 3\n..A\n...\n...\n";
         let grid = Grid::parse(grid_str).unwrap();
         assert!(!grid.has_diagonal_symmetry());
+    }
+
+    #[test]
+    fn test_diagonal_symmetry_subset_masks_must_match() {
+        // [AB] mirrored against [CD]: a transposed fill can violate the
+        // masks, so the grid is not transpose-equivalent.
+        let grid = Grid::parse("3 3\n.[AB].\n[CD]..\n...\n").unwrap();
+        assert!(!grid.has_diagonal_symmetry());
+        // Identical masks across the diagonal are symmetric.
+        let grid = Grid::parse("3 3\n.[AB].\n[AB]..\n...\n").unwrap();
+        assert!(grid.has_diagonal_symmetry());
+    }
+
+    #[test]
+    fn test_diagonal_symmetry_wild_vs_fill_incompatible() {
+        // A wild cell mirrored against a fill cell changes the constraint
+        // structure itself; the transpose is not fill-equivalent.
+        let grid = Grid::parse("3 3\n..*\n...\n...\n").unwrap();
+        assert!(!grid.has_diagonal_symmetry());
+    }
+
+    #[test]
+    fn test_bracket_subset_parsing() {
+        let grid = Grid::parse("1 3\n[AE]..\n").unwrap();
+        let mask = (1 << 0) | (1 << 4); // A and E
+        assert_eq!(grid.cells[0][0], Cell::Subset(mask));
+        let slot = &grid.slots[0];
+        assert!(slot.constrained && !slot.check_only);
+        assert_eq!(slot.pattern[0], Some(mask));
+        assert_eq!(slot.pattern[1], None);
+    }
+
+    #[test]
+    fn test_bracket_normalization() {
+        // A single letter normalizes to Letter.
+        let grid = Grid::parse("1 3\n[A]..\n").unwrap();
+        assert_eq!(grid.cells[0][0], Cell::Letter(0));
+        // Repeated letters count once: [AA] is still a single letter.
+        let grid = Grid::parse("1 3\n[AA]..\n").unwrap();
+        assert_eq!(grid.cells[0][0], Cell::Letter(0));
+        // All 26 letters normalizes to an unconstrained Fill cell.
+        let all: String = ('A'..='Z').collect();
+        let grid = Grid::parse(&format!("1 3\n[{}]..\n", all)).unwrap();
+        assert_eq!(grid.cells[0][0], Cell::Fill);
+    }
+
+    #[test]
+    fn test_bracket_errors() {
+        assert!(Grid::parse("1 3\n[]..\n").is_err()); // empty
+        assert!(Grid::parse("1 3\n[AE\n").is_err()); // unclosed
+        assert!(Grid::parse("1 3\n[ae]..\n").is_err()); // lowercase
+    }
+
+    #[test]
+    fn test_parse_errors() {
+        assert!(Grid::parse("").is_err()); // no dimensions
+        assert!(Grid::parse("x y\n...\n").is_err()); // bad dimensions
+        assert!(Grid::parse("2 3\n...\n").is_err()); // missing row
+        assert!(Grid::parse("1 3\n....\n").is_err()); // too many columns
+        assert!(Grid::parse("1 3\n..?\n").is_err()); // invalid character
+    }
+
+    #[test]
+    fn test_check_only_slot() {
+        // A slot spanning wild and fill cells is constrained but check-only.
+        let grid = Grid::parse("1 5\n**...\n").unwrap();
+        let slot = &grid.slots[0];
+        assert_eq!(slot.len, 5);
+        assert!(slot.constrained);
+        assert!(slot.check_only);
+        // A fully open slot is enumerated normally.
+        let grid = Grid::parse("1 3\n...\n").unwrap();
+        assert!(grid.slots[0].constrained && !grid.slots[0].check_only);
     }
 }
