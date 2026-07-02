@@ -2,6 +2,9 @@
 name = "orca-solver"
 edition.workspace = true
 version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Search engine for the Orca crossword filler: AC-3 propagation with cell-level branching"
 
 [lints]
 workspace = true

@@ -8,7 +8,21 @@ permissions:
   contents: write
 
 jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag must match Cargo.toml version
+        run: |
+          manifest=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$manifest" != "$tag" ]; then
+            echo "::error::Tag v$tag does not match Cargo.toml version $manifest"
+            exit 1
+          fi
+
   build:
+    needs: check-version
     strategy:
       matrix:
         include:
