@@ -77,6 +77,10 @@ Examples:
         /// redistributed to other threads. 0 = disabled. Default: 3s when parallel.
         #[arg(long)]
         split_timeout: Option<u64>,
+
+        /// Skip generating the HTML solution browser.
+        #[arg(long)]
+        no_browser: bool,
     },
 
     /// Print information about a grid and dictionary.
@@ -108,8 +112,15 @@ fn main() {
         Commands::Fill {
             grid: None,
             dict: _,
+            threads,
+            max_solutions,
             ..
-        } => interactive_fill(),
+        } => {
+            if threads != 1 || max_solutions != 0 {
+                eprintln!("note: command-line flags are ignored in interactive mode");
+            }
+            interactive_fill()
+        }
         Commands::Fill {
             grid: Some(grid_path),
             dict,
@@ -119,6 +130,7 @@ fn main() {
             symmetry_break,
             threads,
             split_timeout,
+            no_browser,
         } => {
             let dict_path = match dict {
                 Some(d) => d,
@@ -137,6 +149,7 @@ fn main() {
                 symmetry_break,
                 threads,
                 split_timeout,
+                no_browser,
             )
         }
         Commands::Info { grid, dict } => cmd_info(grid, dict),
@@ -165,7 +178,8 @@ fn interactive_fill() -> Result<()> {
         .interact_text()?;
     let grid_path = expand_path(grid_path.trim());
 
-    let grid_text = std::fs::read_to_string(&grid_path).context("Failed to read grid file")?;
+    let grid_text = std::fs::read_to_string(&grid_path)
+        .with_context(|| format!("Failed to read grid file: {}", grid_path.display()))?;
     let grid = Grid::parse(&grid_text).context("Failed to parse grid")?;
     eprintln!(
         "  Loaded: {}x{}, {} slots, {} crossings\n",
@@ -230,6 +244,7 @@ fn interactive_fill() -> Result<()> {
         progress_interval: 0,
         symmetry_break_cells,
         split_timeout_secs,
+        split_after_nodes: 0,
     };
 
     print_fill_header(&grid, &dict, &config, disallow_shared_substring, threads);
@@ -240,6 +255,7 @@ fn interactive_fill() -> Result<()> {
         &config,
         threads,
         disallow_shared_substring,
+        false,
     )
 }
 
@@ -312,8 +328,10 @@ fn cmd_fill(
     symmetry_break: Option<String>,
     threads: usize,
     split_timeout: Option<u64>,
+    no_browser: bool,
 ) -> Result<()> {
-    let grid_text = std::fs::read_to_string(&grid_path).context("Failed to read grid file")?;
+    let grid_text = std::fs::read_to_string(&grid_path)
+        .with_context(|| format!("Failed to read grid file: {}", grid_path.display()))?;
     let grid = Grid::parse(&grid_text).context("Failed to parse grid")?;
     let dict = Dictionary::load(&dict_path).context("Failed to load dictionary")?;
 
@@ -329,6 +347,7 @@ fn cmd_fill(
         progress_interval,
         symmetry_break_cells,
         split_timeout_secs,
+        split_after_nodes: 0,
     };
 
     print_fill_header(&grid, &dict, &config, disallow_shared_substring, threads);
@@ -339,6 +358,7 @@ fn cmd_fill(
         &config,
         threads,
         disallow_shared_substring,
+        no_browser,
     )
 }
 
@@ -384,6 +404,7 @@ fn print_fill_header(
 }
 
 /// Core fill logic shared by `cmd_fill` and `interactive_fill`.
+#[allow(clippy::too_many_arguments)]
 fn run_fill(
     grid_text: &str,
     grid: &Grid,
@@ -391,11 +412,13 @@ fn run_fill(
     config: &SearchConfig,
     threads: usize,
     disallow_shared_substring: usize,
+    no_browser: bool,
 ) -> Result<()> {
     let is_tty = std::io::stderr().is_terminal();
 
-    // Disable legacy per-node progress lines when using live display
-    let config = if is_tty && config.progress_interval > 0 {
+    // Disable legacy per-node progress lines only when the live display
+    // (multi-threaded, on a terminal) will replace them.
+    let config = if threads > 1 && is_tty && config.progress_interval > 0 {
         SearchConfig {
             progress_interval: 0,
             ..config.clone()
@@ -428,7 +451,7 @@ fn run_fill(
     eprintln!("Final stats: {}", stats);
 
     // Generate HTML browser if we have solutions
-    if !solutions.is_empty() {
+    if !solutions.is_empty() && !no_browser {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -549,12 +572,18 @@ fn run_parallel_with_display(
 
             // Per-thread info
             let mut count = 1u16;
+            // Truncate to terminal width: a wrapped line would break the
+            // MoveUp bookkeeping and leave stale rows behind.
+            let width = crossterm::terminal::size()
+                .map(|(w, _)| w as usize)
+                .unwrap_or(120);
             for (i, desc_mutex) in display_progress.thread_descriptions.iter().enumerate() {
                 if let Ok(guard) = desc_mutex.lock() {
                     if guard.is_empty() {
                         eprintln!("T{}: idle", i);
                     } else {
-                        eprintln!("T{}: {}", i, *guard);
+                        let desc: String = guard.chars().take(width.saturating_sub(8)).collect();
+                        eprintln!("T{}: {}", i, desc);
                     }
                 } else {
                     eprintln!("T{}: idle", i);

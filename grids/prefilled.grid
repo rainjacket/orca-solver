@@ -1,4 +1,5 @@
-# 3x3 grid with pre-filled letters
+# 3x3 grid with pre-filled letters.
+# 2 solutions with dictionaries/test_small.dict
 3 3
 C..
 ...

@@ -3,7 +3,7 @@
 //! Generates a single HTML file with embedded CSS and JS that lets users
 //! browse, group, and vote on crossword fill solutions.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 /// Escape a string for embedding in JSON.
 fn escape_json_string(s: &str) -> String {
@@ -80,7 +80,12 @@ const GRID_COLS = {cols};
         js = HTML_JS,
     );
 
-    std::fs::write(output_path, html)?;
+    std::fs::write(output_path, html).with_context(|| {
+        format!(
+            "Failed to write solution browser: {}",
+            output_path.display()
+        )
+    })?;
     Ok(())
 }
 
@@ -94,13 +99,11 @@ const HTML_CSS: &str = r##"
   --text-secondary: #8b949e;
   --text-tertiary: #484f58;
   --accent: #58a6ff;
-  --accent-emphasis: #1f6feb;
   --green: #3fb950;
   --green-emphasis: #238636;
   --yellow: #d29922;
   --red: #f85149;
   --red-emphasis: #da3633;
-  --purple: #8957e5;
   --cell-dark: #1c2028;
 }
 
@@ -207,9 +210,6 @@ header h1 {
 }
 .sg-variant[data-variants]:hover::after {
   opacity: 1;
-}
-.sg-empty {
-  background: var(--bg-tertiary);
 }
 
 .sg-info {

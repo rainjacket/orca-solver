@@ -1,4 +1,5 @@
-# 3x5 grid with wild corners
+# 3x5 grid with wild corners (check-only slots).
+# 1 solution with dictionaries/test_small.dict
 3 5
 *...*
 .....

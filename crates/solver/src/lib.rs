@@ -1,3 +1,8 @@
+//! The Orca search engine: AC-3 constraint propagation with cell-level
+//! branching, exhaustive by construction, plus partition generation and
+//! work-stealing parallel search. Entry points: [`solve_grid`] and
+//! [`solve_parallel`].
+
 mod constraint;
 mod parallel;
 mod partition;

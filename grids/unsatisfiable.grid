@@ -1,5 +1,5 @@
-# Grid that should be unsatisfiable with a small dictionary
-# Pre-fill conflicting letters
+# Unsatisfiable grid: the top row needs a word starting with ZZ,
+# and dictionaries/test_small.dict deliberately has none. 0 solutions.
 3 3
 ZZ.
 ...

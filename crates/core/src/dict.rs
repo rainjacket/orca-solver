@@ -46,7 +46,7 @@ impl LengthBucket {
                     }
                 } else {
                     // Subset: OR together bitsets for each allowed letter
-                    let num_words = self.all.len();
+                    let num_words = self.all.num_bits();
                     let mut union = BitSet::new(num_words);
                     for letter in 0..26usize {
                         if mask & (1u32 << letter) != 0 {
@@ -82,6 +82,10 @@ impl Dictionary {
     }
 
     /// Parse dictionary content from a string.
+    ///
+    /// Lines are `WORD;SCORE`; `#` comment lines are allowed. Words are
+    /// uppercased; entries containing non-letters or shorter than 3 letters
+    /// are silently skipped. A missing or malformed score is an error.
     pub fn parse(content: &str) -> Result<Self> {
         // First pass: collect unique words (scores parsed for format validation only)
         let mut words: HashSet<String> = HashSet::new();
@@ -194,7 +198,8 @@ impl Dictionary {
 
     /// Validate dictionary format, returning a list of issues.
     pub fn validate(path: &Path) -> Result<Vec<String>> {
-        let content = fs::read_to_string(path)?;
+        let content = fs::read_to_string(path)
+            .with_context(|| format!("Failed to read dictionary file: {}", path.display()))?;
         let mut issues = Vec::new();
 
         for (line_num, line) in content.lines().enumerate() {
@@ -211,6 +216,12 @@ impl Dictionary {
                     if !word.bytes().all(|b| b.is_ascii_uppercase()) {
                         issues.push(format!(
                             "Line {}: word contains non-letter characters: {:?}",
+                            line_num + 1,
+                            word
+                        ));
+                    } else if word.len() < 3 {
+                        issues.push(format!(
+                            "Line {}: word shorter than 3 letters (will be skipped): {:?}",
                             line_num + 1,
                             word
                         ));
@@ -340,5 +351,29 @@ mod tests {
         assert!(dict.bucket(1).is_none());
         assert!(dict.bucket(2).is_none());
         assert_eq!(dict.total_words(), 1);
+    }
+
+    #[test]
+    fn test_parse_rejects_malformed_lines() {
+        assert!(Dictionary::parse("CAT\n").is_err()); // no score
+        assert!(Dictionary::parse("CAT;abc\n").is_err()); // bad score
+    }
+
+    #[test]
+    fn test_skips_non_alpha_words() {
+        let dict = Dictionary::parse("CAT-DOG;50\nGOOD;50\n").unwrap();
+        assert!(dict.bucket(7).is_none(), "CAT-DOG must be skipped");
+        assert_eq!(dict.bucket(4).unwrap().words.len(), 1);
+    }
+
+    #[test]
+    fn test_word_bytes_layout_matches_words() {
+        let dict = Dictionary::parse("CAT;50\nDOG;50\n").unwrap();
+        let bucket = dict.bucket(3).unwrap();
+        for (id, word) in bucket.words.iter().enumerate() {
+            for (pos, ch) in word.bytes().enumerate() {
+                assert_eq!(bucket.word_bytes[id * 3 + pos], ch - b'A');
+            }
+        }
     }
 }

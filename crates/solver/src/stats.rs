@@ -11,6 +11,8 @@ pub struct SolverStats {
     pub propagations: u64,
     pub wipeouts: u64,
     pub solutions: u64,
+    /// Leaf fills rejected by validation: duplicate words, plus shared-substring
+    /// violations when `--disallow-shared-substring` is active.
     pub dupes_skipped: u64,
     pub start_time: Option<Instant>,
 }

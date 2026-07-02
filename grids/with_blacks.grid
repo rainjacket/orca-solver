@@ -1,4 +1,5 @@
-# 5x5 grid with black squares
+# 5x5 grid with black squares.
+# 2 solutions with dictionaries/test_small.dict
 5 5
 ..#..
 .....

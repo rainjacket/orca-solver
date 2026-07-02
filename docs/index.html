@@ -6,8 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta property="og:title" content="How Orca Works: A High-Performance Crossword Filler">
     <meta property="og:description" content="A deep dive into Orca's constraint-propagation crossword filler.">
-    <meta property="og:image" content="https://storage.googleapis.com/orca-how-it-works/screenshot-5.png">
-    <meta property="og:url" content="https://storage.googleapis.com/orca-how-it-works/how-orca-works.html">
+    <meta property="og:image" content="https://rainjacket.github.io/orca-solver/screenshot-5.png">
+    <meta property="og:url" content="https://rainjacket.github.io/orca-solver/">
     <meta property="og:type" content="article">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="icon" type="image/png" href="favicon.png">
@@ -2329,16 +2329,6 @@ var animData = { anim15: renderAnimGrid('anim15',
     Before propagation modifies any domain, the solver snapshots it. On backtrack, it
     restores every saved domain in one batch.
 </p>
-
-<p>
-    An additional optimization makes this even faster:
-</p>
-
-<ul><li>
-    <strong>Forced-move inlining.</strong> If a cell has only one possible letter, we insert it inline without
-    pushing an additional stack frame &ndash; it's saved as part of the parent&rsquo;s trail entry. This keeps the trail shallow rather than
-    growing with every forced move.
-</li></ul>
 
 <h3>Where time is spent</h3>
 

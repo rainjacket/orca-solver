@@ -4,3 +4,6 @@ dictionaries/*.dict
 *.swp
 *.swo
 .DS_Store
+!dictionaries/bench_15x15_supplement.dict
+!dictionaries/bench_15x15_with_tiers_supplement.dict
+solutions_*.html

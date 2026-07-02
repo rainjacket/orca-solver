@@ -1,6 +1,11 @@
 //! Fixed-size bitset backed by `Vec<u64>` for high-performance set operations
-//! on crossword candidate sets (~100K bits). The hot path (`and_with`) compiles
-//! to SIMD instructions (NEON / AVX).
+//! on crossword candidate sets (~100K bits). The hot path (`and_with`)
+//! auto-vectorizes on both aarch64 and x86-64.
+//!
+//! Invariant: bits at positions >= `num_bits` in the last block are always
+//! zero. `count_ones`, `is_empty`, iteration, and equality rely on this;
+//! `set`/`test` bounds checks are debug-only, and `blocks_mut` exposes raw
+//! blocks — callers must preserve the invariant.
 
 use std::fmt;
 
@@ -34,8 +39,8 @@ impl BitSet {
         BitSet { blocks, num_bits }
     }
 
-    /// Number of bits in the bitset.
-    pub fn len(&self) -> usize {
+    /// Capacity in bits (not the number of set bits; see `count_ones`).
+    pub fn num_bits(&self) -> usize {
         self.num_bits
     }
 
@@ -51,8 +56,9 @@ impl BitSet {
         (self.blocks[idx / 64] & (1u64 << (idx % 64))) != 0
     }
 
-    /// Returns true if no bits are set.
-    pub fn is_empty(&self) -> bool {
+    /// Returns true if no bits are set. (Named `is_clear` because `is_empty`
+    /// alongside a capacity accessor would suggest zero capacity.)
+    pub fn is_clear(&self) -> bool {
         self.blocks.iter().all(|&b| b == 0)
     }
 
@@ -69,6 +75,8 @@ impl BitSet {
         }
     }
 
+    /// In-place AND with another bitset — the solver's hot path.
+    /// Returns `true` if any bit remains set afterwards.
     #[inline]
     pub fn and_with(&mut self, other: &BitSet) -> bool {
         debug_assert_eq!(self.blocks.len(), other.blocks.len());
@@ -192,15 +200,15 @@ mod tests {
     #[test]
     fn test_new_empty() {
         let bs = BitSet::new(100);
-        assert!(bs.is_empty());
+        assert!(bs.is_clear());
         assert_eq!(bs.count_ones(), 0);
-        assert_eq!(bs.len(), 100);
+        assert_eq!(bs.num_bits(), 100);
     }
 
     #[test]
     fn test_new_all_set() {
         let bs = BitSet::new_all_set(100);
-        assert!(!bs.is_empty());
+        assert!(!bs.is_clear());
         assert_eq!(bs.count_ones(), 100);
     }
 
@@ -258,7 +266,7 @@ mod tests {
 
         let non_empty = a.and_with(&b);
         assert!(!non_empty);
-        assert!(a.is_empty());
+        assert!(a.is_clear());
     }
 
     #[test]

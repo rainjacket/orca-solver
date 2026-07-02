@@ -395,12 +395,14 @@ pub fn initial_propagate(
             return false;
         }
 
-        if slot.pattern.iter().any(|p| p.is_some()) {
-            changed_slots.push(i);
-        }
+        // Seed propagation from every constrained slot, not just pattern-
+        // constrained ones: a domain that is narrow from initialization alone
+        // (e.g. a length bucket holding a single word) constrains its crossings
+        // just as much, and nothing later will ever enqueue its arcs.
+        changed_slots.push(i);
     }
 
-    // Propagate arc consistency from all pattern-constrained slots
+    // Establish arc consistency across all constrained slots
     propagate_from_slots(state, graph, dict, grid, &changed_slots)
 }
 
