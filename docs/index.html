@@ -2330,13 +2330,6 @@ var animData = { anim15: renderAnimGrid('anim15',
     restores every saved domain in one batch.
 </p>
 
-<p>
-    One structural detail keeps the trail shallow: cells with a single viable letter are never
-    chosen as branch points &ndash; propagation resolves them as a side effect of neighboring
-    assignments &ndash; so stack frames and trail entries are only created where the search
-    genuinely branches.
-</p>
-
 <h3>Where time is spent</h3>
 
 <p>
