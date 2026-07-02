@@ -1,4 +1,5 @@
-# Example 5x5 open grid (no black squares)
+# Example 5x5 open grid (no black squares).
+# 2 solutions with dictionaries/test_small.dict
 5 5
 .....
 .....
