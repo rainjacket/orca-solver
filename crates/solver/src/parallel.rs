@@ -109,7 +109,8 @@ fn solve_parallel_inner(
         return ParallelResult {
             solutions: vec![],
             stats,
-            exhausted: true,
+            // Nothing was searched; claiming exhaustion here would be false.
+            exhausted: false,
         };
     }
 
@@ -139,6 +140,10 @@ fn solve_parallel_inner(
     let active_workers = Arc::new(AtomicU64::new(0));
     let total_solutions = Arc::new(AtomicU64::new(0));
     let total_nodes = Arc::new(AtomicU64::new(0));
+    // Set when any partition is discarded unexecuted (solution cap reached,
+    // or a sub-partition failed to parse). If set, the search must not be
+    // reported as exhausted — part of the space was never explored.
+    let dropped_work = Arc::new(AtomicBool::new(false));
 
     // Collected results from all threads
     let results: Arc<Mutex<Vec<(Vec<(String, Vec<String>)>, SolverStats, bool)>>> =
@@ -160,12 +165,14 @@ fn solve_parallel_inner(
             let total_nodes = Arc::clone(&total_nodes);
 
             let results = Arc::clone(&results);
+            let dropped_work = Arc::clone(&dropped_work);
             let progress = progress.clone();
             let config = SearchConfig {
                 max_solutions: config.max_solutions,
                 progress_interval: 0,
                 symmetry_break_cells: config.symmetry_break_cells.clone(),
                 split_timeout_secs: split_timeout,
+                split_after_nodes: 0,
             };
 
             s.spawn(move |_| {
@@ -204,10 +211,12 @@ fn solve_parallel_inner(
                         }
                     };
 
-                    // Check if we've found enough solutions
+                    // Solution cap reached: discard this partition unexecuted,
+                    // and record that the search is no longer exhaustive.
                     if config.max_solutions > 0
                         && total_solutions.load(Ordering::Relaxed) >= config.max_solutions
                     {
+                        dropped_work.store(true, Ordering::Relaxed);
                         active_workers.fetch_sub(1, Ordering::SeqCst);
                         let (_, cvar) = &*queue;
                         cvar.notify_all();
@@ -216,7 +225,9 @@ fn solve_parallel_inner(
 
                     let part_grid = match Grid::parse(&spec.grid_text) {
                         Ok(g) => g,
-                        Err(_) => {
+                        Err(e) => {
+                            eprintln!("[parallel] Failed to parse partition: {}", e);
+                            dropped_work.store(true, Ordering::Relaxed);
                             active_workers.fetch_sub(1, Ordering::SeqCst);
                             let (_, cvar) = &*queue;
                             cvar.notify_all();
@@ -308,7 +319,7 @@ fn solve_parallel_inner(
     let mut all_solutions = Vec::new();
     let mut merged_stats = SolverStats::new();
     merged_stats.start_time = stats.start_time;
-    let mut all_exhausted = true;
+    let mut all_exhausted = !dropped_work.load(Ordering::Relaxed);
 
     for (solutions, part_stats, exhausted) in results {
         all_solutions.extend(solutions);
@@ -318,9 +329,68 @@ fn solve_parallel_inner(
         }
     }
 
+    // Workers cap per-partition, so the merged total can overshoot; honor the
+    // requested cap exactly, like the sequential search does. Truncating means
+    // solutions beyond the cap exist, so the result is not exhaustive.
+    if config.max_solutions > 0 && all_solutions.len() as u64 > config.max_solutions {
+        all_solutions.truncate(config.max_solutions as usize);
+        all_exhausted = false;
+    }
+
     ParallelResult {
         solutions: all_solutions,
         stats: merged_stats,
         exhausted: all_exhausted,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    /// 3x3 fixture with known solutions: TIN/ACE/PET (columns TAP/ICE/NET)
+    /// and its transpose. All six words are distinct, so both fills pass the
+    /// duplicate check.
+    fn fixture() -> (&'static str, Dictionary) {
+        let grid_text = "3 3\n...\n...\n...\n";
+        let dict = Dictionary::parse("TIN;50\nACE;50\nPET;50\nTAP;50\nICE;50\nNET;50\n").unwrap();
+        (grid_text, dict)
+    }
+
+    fn quiet_config() -> SearchConfig {
+        SearchConfig {
+            progress_interval: 0,
+            ..SearchConfig::default()
+        }
+    }
+
+    #[test]
+    fn test_parallel_matches_sequential() {
+        let (grid_text, dict) = fixture();
+        let grid = Grid::parse(grid_text).unwrap();
+        let seq = solve_grid(&grid, &dict, &quiet_config(), 0, None);
+        assert!(seq.exhausted);
+        assert!(seq.solutions.len() >= 2, "fixture must have solutions");
+
+        let par = solve_parallel(grid_text, &dict, &quiet_config(), 2, 0);
+        assert!(par.exhausted);
+        let seq_set: HashSet<&str> = seq.solutions.iter().map(|(g, _)| g.as_str()).collect();
+        let par_set: HashSet<&str> = par.solutions.iter().map(|(g, _)| g.as_str()).collect();
+        assert_eq!(seq_set, par_set);
+    }
+
+    #[test]
+    fn test_parallel_solution_cap_is_exact_and_not_exhausted() {
+        let (grid_text, dict) = fixture();
+        // The fixture has at least two solutions; capping at one must return
+        // exactly one and must not claim the space was exhausted.
+        let config = SearchConfig {
+            max_solutions: 1,
+            ..quiet_config()
+        };
+        let par = solve_parallel(grid_text, &dict, &config, 2, 0);
+        assert_eq!(par.solutions.len(), 1);
+        assert!(!par.exhausted);
     }
 }

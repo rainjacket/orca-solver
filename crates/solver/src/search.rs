@@ -26,10 +26,17 @@ pub struct SearchConfig {
     /// Report progress every N nodes (0 = no progress reporting).
     pub progress_interval: u64,
     /// Symmetry breaking: enforce letter(cell_a) ≤ letter(cell_b) during propagation.
+    ///
+    /// Sound only when the two cells are a diagonal mirror pair on a grid whose
+    /// transpose is fill-equivalent (see `Grid::has_diagonal_symmetry`); with
+    /// arbitrary cells this prunes valid solutions.
     pub symmetry_break_cells: Option<(CellSymInfo, CellSymInfo)>,
     /// Split timeout in seconds (0 = disabled). When exceeded, remaining work
     /// at ALL stack frames is split into sub-partitions.
     pub split_timeout_secs: u64,
+    /// Split after this many search nodes (0 = disabled). A deterministic
+    /// alternative to `split_timeout_secs`, used by tests.
+    pub split_after_nodes: u64,
 }
 
 impl Default for SearchConfig {
@@ -39,6 +46,7 @@ impl Default for SearchConfig {
             progress_interval: 10_000,
             symmetry_break_cells: None,
             split_timeout_secs: 0,
+            split_after_nodes: 0,
         }
     }
 }
@@ -64,6 +72,10 @@ pub fn resolve_cell(grid: &Grid, row: usize, col: usize) -> Option<CellSymInfo> 
 /// Validate a fill: build assignments from singleton domains, check for
 /// duplicate words and shared substrings. Returns `Some(assignments)` if
 /// valid, `None` if a duplicate word or shared substring violation is found.
+///
+/// Check-only slots are included when forced: a tendril narrowed to a single
+/// candidate is validated (and rendered) like any assigned word, while an
+/// ambiguous one is skipped. See `Slot::check_only`.
 fn validate_fill<'a>(
     state: &SolverState,
     dict: &'a Dictionary,
@@ -94,18 +106,36 @@ fn validate_fill<'a>(
             return None;
         }
 
-        // Shared substring check
+        // Shared substring check. Dedupe within the word first: an entry that
+        // repeats its own substring (e.g. TWENTYTWENTY) must not collide with
+        // itself — the constraint is between distinct entries.
         if disallow_shared_substring > 0 {
+            let mut word_subs = std::collections::HashSet::new();
             for len in disallow_shared_substring..=word_text.len() {
                 for start in 0..=word_text.len() - len {
-                    let sub = &word_text[start..start + len];
-                    if !all_substrings.insert(sub) {
-                        return None;
-                    }
+                    word_subs.insert(&word_text[start..start + len]);
+                }
+            }
+            for sub in word_subs {
+                if !all_substrings.insert(sub) {
+                    return None;
                 }
             }
         }
     }
+
+    // With arc consistency established at the root and maintained after every
+    // domain change, crossing letters must agree at a leaf. Verify in debug
+    // builds; a failure here means a propagation bug upstream.
+    debug_assert!(
+        grid.crossings.iter().all(|c| {
+            match (assignments[c.slot_a], assignments[c.slot_b]) {
+                (Some(a), Some(b)) => a.as_bytes()[c.pos_in_a] == b.as_bytes()[c.pos_in_b],
+                _ => true,
+            }
+        }),
+        "leaf fill has disagreeing crossing letters (propagation bug)"
+    );
 
     Some(assignments)
 }
@@ -158,8 +188,12 @@ pub struct SubPartition {
 
 /// Result of executing a single partition.
 pub struct PartitionResult {
+    /// Filled grids as (grid_text, word_list) pairs.
     pub solutions: Vec<(String, Vec<String>)>,
     pub stats: SolverStats,
+    /// Whether this partition's own search ran to completion. Note that
+    /// `exhausted: true` with non-empty `sub_partitions` means work remains:
+    /// the split shed the rest of the tree into those sub-partitions.
     pub exhausted: bool,
     /// Sub-partitions created by mid-search splitting (empty if no split occurred).
     pub sub_partitions: Vec<SubPartition>,
@@ -265,14 +299,14 @@ pub fn solve_grid(
 
 /// Maximum crossings to evaluate before committing to the best found so far.
 /// Used by both per-node branching (`select_branch`) and partition
-/// splitting (via `find_best_crossing`). Crossings are pre-sorted by static
-/// length-sum (descending sum of slot lengths) in `ConstraintGraph::from_grid()`,
-/// so the bounded scan evaluates longer-slot crossings first.
+/// splitting (via `find_best_crossing`). Crossings are pre-sorted by cell
+/// scan-tier then static length-sum (descending) in `ConstraintGraph::from_grid()`,
+/// so the bounded scan evaluates lower tiers, and longer slots within a tier, first.
 const CROSSING_SCAN_LIMIT: usize = 15;
 
 /// Shared crossing evaluation used by both partition splitting and per-node
-/// branching. Scans up to `CROSSING_SCAN_LIMIT` valid crossings (sorted by
-/// static length-sum order) and picks the one minimizing Σ_l count_a[l] * count_b[l],
+/// branching. Scans up to `CROSSING_SCAN_LIMIT` valid crossings (in the
+/// pre-sorted tier/length-sum order) and picks the one minimizing Σ_l count_a[l] * count_b[l],
 /// tie-broken by viable_count.
 fn find_best_crossing(
     state: &SolverState,
@@ -495,27 +529,6 @@ struct SearchFrame {
     chosen_letter: u8,
 }
 
-/// Backtrack to the nearest frame with remaining letters.
-/// Pops exhausted frames and undoes their trail entries.
-/// Returns `true` if a viable frame was found, `false` if stack is empty.
-#[inline]
-fn backtrack_to_viable(stack: &mut Vec<SearchFrame>, state: &mut SolverState) -> bool {
-    loop {
-        let frame = match stack.last_mut() {
-            Some(f) => f,
-            None => return false,
-        };
-        if frame.child_trail_active {
-            state.pop_level();
-            frame.child_trail_active = false;
-        }
-        if frame.remaining_letters != 0 {
-            return true;
-        }
-        stack.pop();
-    }
-}
-
 /// Core search loop (iterative with explicit stack to avoid stack overflow).
 ///
 /// When `grid_text` is `Some` and `config.split_timeout_secs > 0`, the search
@@ -535,13 +548,18 @@ where
 {
     let mut stack: Vec<SearchFrame> = Vec::new();
     // Split timeout: None if disabled, cleared after the first split fires.
-    let mut split_state = if config.split_timeout_secs > 0 && grid_text.is_some() {
+    let mut split_deadline = if config.split_timeout_secs > 0 && grid_text.is_some() {
         Some((
             std::time::Duration::from_secs(config.split_timeout_secs),
             std::time::Instant::now(),
         ))
     } else {
         None
+    };
+    let mut split_after_nodes = if grid_text.is_some() {
+        config.split_after_nodes
+    } else {
+        0
     };
     let mut sub_partitions: Vec<SubPartition> = Vec::new();
     let mut post_split = false;
@@ -556,94 +574,58 @@ where
             eprintln!("[progress] {}", state.stats);
         }
 
-        // Mid-search split: after timeout, extract remaining untried letters from every
-        // stack frame as sub-partitions, then finish the current path.
-        if let Some((timeout, start)) = split_state {
-            if state.stats.nodes % 1_000 == 0 && start.elapsed() >= timeout {
-                sub_partitions = split_remaining_work(&mut stack, grid, grid_text.unwrap());
-                split_state = None;
-                post_split = true;
-            }
+        // Mid-search split: after the timeout (or node budget), extract remaining
+        // untried letters from every stack frame as sub-partitions, then finish
+        // the current path.
+        let split_now = (split_after_nodes > 0 && state.stats.nodes >= split_after_nodes)
+            || split_deadline.is_some_and(|(timeout, start)| {
+                state.stats.nodes % 1_000 == 0 && start.elapsed() >= timeout
+            });
+        if split_now {
+            sub_partitions = split_remaining_work(&mut stack, grid, grid_text.unwrap());
+            split_deadline = None;
+            split_after_nodes = 0;
+            post_split = true;
         }
 
         // Select the next cell to branch on
         let branch = select_branch(state, graph, dict, grid);
 
-        // Forced move: cell has exactly 1 viable letter, no branching needed.
-        // Apply inline and save domain into the parent's trail entry so
-        // backtracking undoes everything at once. This prevents unbounded
-        // trail growth on deep forced chains.
+        // A branch point always has 2+ viable letters: select_branch never
+        // returns a single-viable cell (propagation resolves those on its own),
+        // so there is no separate forced-move path.
         if let Some(ref b) = branch {
-            if b.viable_mask.count_ones() == 1 && !state.trail_levels.is_empty() {
-                let forced_letter = b.viable_mask.trailing_zeros() as u8;
-                let fb_bucket = match dict.bucket(grid.slots[b.slot_id].len) {
-                    Some(bk) => bk,
-                    None => {
-                        state.stats.backtracks += 1;
-                        if !backtrack_to_viable(&mut stack, state) {
-                            return (true, sub_partitions);
-                        }
-                        continue 'descend;
-                    }
-                };
-                state.save_domain(b.slot_id);
-                let letter_bits = &fb_bucket.letter_bits[b.pos_in_slot][forced_letter as usize];
-                state.domains[b.slot_id].intersect_incremental(letter_bits);
-                if state.domains[b.slot_id].is_empty() {
-                    state.stats.backtracks += 1;
-                } else {
-                    if propagate(state, graph, dict, grid, b.slot_id) {
-                        if let Some((ref ca, ref cb)) = config.symmetry_break_cells {
-                            if !enforce_cell_symmetry(state, graph, dict, grid, ca, cb) {
-                                state.stats.backtracks += 1;
-                                if !backtrack_to_viable(&mut stack, state) {
-                                    return (true, sub_partitions);
-                                }
-                                continue 'descend;
-                            }
-                        }
-                        continue 'descend;
-                    } else {
-                        state.stats.backtracks += 1;
-                    }
-                }
-                // Forced move wiped out — backtrack to a viable frame.
-                if !backtrack_to_viable(&mut stack, state) {
-                    return (true, sub_partitions);
-                }
-                // Fall through to try next letter at the current frame
-            } else {
-                // Normal branch (2+ viable letters): push frame
-                if dict.bucket(grid.slots[b.slot_id].len).is_none() {
-                    state.stats.backtracks += 1;
-                } else if post_split {
-                    // Post-split: emit sub-partitions instead of descending.
-                    let (path_grid, path_desc) = build_path_grid(&stack, grid, grid_text.unwrap());
-                    let (br_row, br_col) = grid.slots[b.slot_id].cells[b.pos_in_slot];
-                    emit_sub_partitions(
-                        &mut sub_partitions,
-                        &path_grid,
-                        &path_desc,
-                        br_row,
-                        br_col,
-                        b.viable_mask,
-                        "deep-split",
-                    );
+            if dict.bucket(grid.slots[b.slot_id].len).is_none() {
+                state.stats.backtracks += 1;
+            } else if post_split {
+                // Post-split: emit sub-partitions instead of descending.
+                let (path_grid, path_desc) = build_path_grid(&stack, grid, grid_text.unwrap());
+                let (br_row, br_col) = grid.slots[b.slot_id].cells[b.pos_in_slot];
+                emit_sub_partitions(
+                    &mut sub_partitions,
+                    &path_grid,
+                    &path_desc,
+                    br_row,
+                    br_col,
+                    b.viable_mask,
+                    "deep-split",
+                );
+                if config.progress_interval > 0 {
                     eprintln!(
                         "[split] Post-split: {} deep sub-partitions at ({},{})",
                         b.viable_mask.count_ones(),
                         br_row,
                         br_col
                     );
-                } else {
-                    stack.push(SearchFrame {
-                        slot_id: b.slot_id,
-                        pos_in_slot: b.pos_in_slot,
-                        remaining_letters: b.viable_mask,
-                        child_trail_active: false,
-                        chosen_letter: 0,
-                    });
                 }
+            } else {
+                stack.push(SearchFrame {
+                    slot_id: b.slot_id,
+                    pos_in_slot: b.pos_in_slot,
+                    remaining_letters: b.viable_mask,
+                    child_trail_active: false,
+                    chosen_letter: 0,
+                });
             }
         } else {
             // Leaf: all constrained non-check-only domains are singletons
@@ -1071,10 +1053,8 @@ mod tests {
 
         // Run without split
         let config_nosplit = SearchConfig {
-            max_solutions: 0,
             progress_interval: 0,
-            symmetry_break_cells: None,
-            split_timeout_secs: 0,
+            ..SearchConfig::default()
         };
         let baseline = super::solve_grid(
             &Grid::parse(grid_str).unwrap(),
@@ -1086,10 +1066,9 @@ mod tests {
 
         // Run with split enabled but long timeout (search finishes first)
         let config_split = SearchConfig {
-            max_solutions: 0,
             progress_interval: 0,
-            symmetry_break_cells: None,
             split_timeout_secs: 600,
+            ..SearchConfig::default()
         };
         let split_result = super::solve_grid(
             &Grid::parse(grid_str).unwrap(),
@@ -1109,5 +1088,47 @@ mod tests {
             "Split-enabled search should find same solutions as baseline"
         );
         assert_eq!(baseline.exhausted, split_result.exhausted);
+    }
+
+    #[test]
+    fn test_singleton_root_domains_are_propagated() {
+        // Regression: a slot whose domain is a singleton from initialization
+        // alone (a length bucket holding one word) must still constrain its
+        // crossings. ABC and XXXX disagree at the shared corner cell, so this
+        // grid has no valid fill; the bug reported one invalid "solution".
+        let dict = Dictionary::parse("ABC;50\nXXXX;50\n").unwrap();
+        let grid = Grid::parse("4 3\n...\n.##\n.##\n.##\n").unwrap();
+        let result = super::solve_grid(&grid, &dict, &SearchConfig::default(), 0, None);
+        assert!(result.exhausted);
+        assert!(
+            result.solutions.is_empty(),
+            "conflicting singleton domains must yield no solutions, got {:?}",
+            result.solutions,
+        );
+    }
+
+    #[test]
+    fn test_word_repeating_its_own_substring_is_not_rejected() {
+        // Regression: TWENTYTWENTY contains its own 6-gram twice; the shared-
+        // substring rule constrains distinct entries, not a word against
+        // itself, so a single-slot grid must still fill.
+        let dict = Dictionary::parse("TWENTYTWENTY;50\n").unwrap();
+        let grid = Grid::parse("1 12\n............\n").unwrap();
+        let result = super::solve_grid(&grid, &dict, &SearchConfig::default(), 6, None);
+        assert!(result.exhausted);
+        assert_eq!(result.solutions.len(), 1);
+    }
+
+    #[test]
+    fn test_shared_substring_between_entries_rejected() {
+        // Two distinct entries sharing a 6-gram (ABCDEF) must be rejected
+        // when the rule is on, and accepted when it is off.
+        let dict = Dictionary::parse("ABCDEFG;50\nABCDEFH;50\n").unwrap();
+        let grid = Grid::parse("2 7\n.......\n.......\n").unwrap();
+        let with_rule = super::solve_grid(&grid, &dict, &SearchConfig::default(), 6, None);
+        assert!(with_rule.exhausted);
+        assert!(with_rule.solutions.is_empty());
+        let without_rule = super::solve_grid(&grid, &dict, &SearchConfig::default(), 0, None);
+        assert_eq!(without_rule.solutions.len(), 2);
     }
 }
