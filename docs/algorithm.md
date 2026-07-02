@@ -45,9 +45,9 @@ Crossings between longer slots are evaluated first (via a static sort by length 
 
 The static crossing sort can be biased per cell. If grid cells are tagged with scan-order tier digits (`0`-`9`; see the grid format), the sort key becomes `(cell tier ascending, length sum descending)`, so all of one tier's crossings are considered before the next tier's. This lets a grid steer the solver to complete one region before another. With no tier digits, every cell is untiered and the order is the plain length-sum sort above (unchanged).
 
-## Iterative search with forced-move inlining
+## Iterative search
 
-The search uses an explicit stack rather than recursion, avoiding stack overflow on deep search trees. When a cell has exactly one viable letter, it is applied inline without creating a stack frame or trail entry -- its domain save is folded into the parent branch's trail. This prevents memory blowup on long chains of forced moves.
+The search uses an explicit stack rather than recursion, avoiding stack overflow on deep search trees. Cells with a single viable letter are never selected as branch points -- constraint propagation resolves them as a side effect of neighboring assignments -- so stack frames and trail entries are only created where the search genuinely branches.
 
 ## Duplicate and substring constraints
 
@@ -58,6 +58,8 @@ At leaf nodes (all domains are singletons), Orca validates the fill:
 
 These checks are deferred to leaf nodes rather than maintained during search, since the overhead of incremental tracking outweighs the pruning benefit.
 
+Slots that span wild (`*`) cells -- tendrils into unconstrained corners -- are *check-only*: they propagate like normal slots (a corner that cannot be extended kills the branch) but are never assigned a word. If a fill forces a tendril down to a single remaining candidate, that word is deliberately treated as part of the fill: it participates in the duplicate and substring checks, and its letters appear in the wild cells of the output. An ambiguous tendril is left out of validation and its wild cells print as `*`.
+
 ## Parallel search
 
 Multi-threaded search works by partitioning the search tree. The root state is split at the best crossing cell: each viable letter becomes a separate partition. Partitions with the highest estimated work (sum of log2 domain sizes) are split further until the desired partition count is reached. Threads pull partitions from a shared work queue.
@@ -66,4 +68,4 @@ Within each thread, a **mid-search split** mechanism handles load imbalance: if 
 
 ## Symmetry breaking
 
-Grids with diagonal symmetry (where transposing rows and columns produces an equivalent grid) can yield pairs of transpose-equivalent fills. Orca prunes these by enforcing `letter(cell_a) <= letter(cell_b)` for a pair of diagonally-mirrored cells, halving the search space. This is integrated into the AC-3 fixpoint loop.
+Grids with diagonal symmetry (where transposing rows and columns produces an equivalent grid) can yield pairs of transpose-equivalent fills. Orca prunes these by enforcing `letter(cell_a) <= letter(cell_b)` for a pair of diagonally-mirrored cells, roughly halving the search space (fills whose letters agree at the chosen cell pair are not deduplicated). This is integrated into the AC-3 fixpoint loop.

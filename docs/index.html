@@ -6,8 +6,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta property="og:title" content="How Orca Works: A High-Performance Crossword Filler">
     <meta property="og:description" content="A deep dive into Orca's constraint-propagation crossword filler.">
-    <meta property="og:image" content="https://storage.googleapis.com/orca-how-it-works/screenshot-5.png">
-    <meta property="og:url" content="https://storage.googleapis.com/orca-how-it-works/how-orca-works.html">
+    <meta property="og:image" content="https://rainjacket.github.io/orca-solver/screenshot-5.png">
+    <meta property="og:url" content="https://rainjacket.github.io/orca-solver/">
     <meta property="og:type" content="article">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="icon" type="image/png" href="favicon.png">
@@ -2331,14 +2331,11 @@ var animData = { anim15: renderAnimGrid('anim15',
 </p>
 
 <p>
-    An additional optimization makes this even faster:
+    One structural detail keeps the trail shallow: cells with a single viable letter are never
+    chosen as branch points &ndash; propagation resolves them as a side effect of neighboring
+    assignments &ndash; so stack frames and trail entries are only created where the search
+    genuinely branches.
 </p>
-
-<ul><li>
-    <strong>Forced-move inlining.</strong> If a cell has only one possible letter, we insert it inline without
-    pushing an additional stack frame &ndash; it's saved as part of the parent&rsquo;s trail entry. This keeps the trail shallow rather than
-    growing with every forced move.
-</li></ul>
 
 <h3>Where time is spent</h3>
 
@@ -2405,7 +2402,7 @@ var animData = { anim15: renderAnimGrid('anim15',
 <h3>Symmetry breaking</h3>
 
 <p>
-    Grids with diagonal symmetry can be transposed to produce a duplicate solution on the same grid. Orca can enforce a letter ordering between two mirror cells during propagation, cutting the search space in half.
+    Grids with diagonal symmetry can be transposed to produce a duplicate solution on the same grid. Orca can enforce a letter ordering between two mirror cells during propagation, cutting the search space roughly in half (fills whose letters agree at the chosen cell pair keep their transposed twins).
 </p>
 
 <div class="grid-figure" id="sym-demo">

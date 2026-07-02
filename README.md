@@ -22,7 +22,7 @@ cargo build --release
 ## Quick start
 
 ```bash
-# Interactive mode — prompts for all options
+# Interactive mode — prompts for the common options
 orca fill
 
 # Find all solutions
@@ -39,7 +39,7 @@ When run with multiple (2 or more) threads on a terminal, Orca shows a live prog
 
 ## Dictionary
 
-Orca takes any `.dict` file as a command-line argument, you supply your own dictionary.
+Orca takes any `.dict` file as a command-line argument — you supply your own dictionary.
 
 ### Dictionary format
 
@@ -49,8 +49,9 @@ Orca uses `.dict` files with one entry per line:
 WORD;SCORE
 ```
 
-- Words must be uppercase A-Z
+- Words are uppercased on load; entries containing non-letters are skipped
 - Words shorter than 3 letters are ignored
+- Lines starting with `#` are comments
 - Scores are currently unused
 
 ## Grid format
@@ -76,7 +77,7 @@ Grid files can use `.grid` or `.txt` extensions. The first non-comment line is `
 | `[ABC]`   | Letter subset constraint  |
 | `0-9`     | Empty cell with a scan-order tier (see below) |
 
-Comments (lines starting with `#`) are only allowed before the dimensions line.
+Comments (lines starting with `# `) are only allowed before the dimensions line. The space matters: a bare `#####` line is grid data (a row of black squares).
 
 ### Scan-order tiers
 
@@ -91,7 +92,7 @@ tiers. A digit cell is otherwise an ordinary empty cell. See
 
 ### `orca fill`
 
-Run without arguments to enter interactive mode, which prompts for all options and auto-detects features like diagonal symmetry breaking.
+Run without arguments to enter interactive mode, which prompts for the common options and auto-detects features like diagonal symmetry breaking.
 
 ### `orca fill <GRID> <DICT>`
 
@@ -118,14 +119,14 @@ Check a dictionary file for format issues.
 
 ## Benchmarking
 
-A benchmark grid and script are included. To get comparable results, we recommend using [Spread the Wordlist](https://www.spreadthewordlist.com/) (~465K entries) as a standardized dictionary:
+Two 15x15 benchmark grids and a script are included. Bring your own wordlist — we recommend [Spread the Wordlist](https://www.spreadthewordlist.com/) (~300K entries) for comparable results:
 
 ```bash
 mv ~/Downloads/spreadthewordlist_caps.dict dictionaries/
-./bench.sh
+./bench.sh                      # or: DICT=/path/to/your.dict ./bench.sh
 ```
 
-The script builds a release binary and runs an exhaustive search on a 15x15 grid. Use `./bench.sh --parallel N` to benchmark multi-threaded search.
+The script builds a release binary and runs an exhaustive search on both grids (`bench_15x15.grid` and `bench_15x15_with_tiers.grid`, the scan-order tier demo). Each grid has a small companion supplement in `dictionaries/` — the entries of a known fill — appended to your wordlist at run time, so both grids are fillable with any large list. The plain grid is a long exhaustive run (on the order of ten minutes sequentially with a ~300K wordlist); the tiers grid finishes in seconds. Use `./bench.sh --parallel N` to benchmark multi-threaded search.
 
 ## License
 
