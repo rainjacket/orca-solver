@@ -1,10 +1,18 @@
 # Orca
 
+[![CI](https://github.com/rainjacket/orca-solver/actions/workflows/ci.yml/badge.svg)](https://github.com/rainjacket/orca-solver/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/rainjacket/orca-solver)](https://github.com/rainjacket/orca-solver/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 **[How Orca Works](https://rainjacket.github.io/orca-solver/)** — a blog post style explanation of the algorithm and design.
 
 A high-performance crossword grid filler.
 
 Orca is designed for wide-open grids that are difficult for other solvers. It uses AC-3 propagation with cell-level branching, and tuned heuristics for rapid exhaustive search. Multi-threaded search is supported via partition-based parallelism.
+
+<img src="docs/solution-browser.png" width="440" alt="The HTML solution browser showing seven fills of a wild-corner 15x15 collapsed into one group, with variant cells highlighted and per-group keep/skip controls">
+
+*The built-in solution browser: seven exhaustively-found fills of a wild-corner 15x15, collapsed into one group — variant cells highlighted, wild corners shown as `*`.*
 
 ## Installation
 
