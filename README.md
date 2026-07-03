@@ -10,9 +10,9 @@ A high-performance crossword grid filler.
 
 Orca is designed for wide-open grids that are difficult for other solvers. It uses AC-3 propagation with cell-level branching, and tuned heuristics for rapid exhaustive search. Multi-threaded search is supported via partition-based parallelism.
 
-<img src="docs/benchmark-chart.png" width="640" alt="Benchmark bar charts: on a 7x7 with no black squares Orca finishes an exhaustive search in 5 min 16 sec vs 30 min 30 sec for Crossword Compiler; on a 15x15 with center stack only, 3 min 41 sec vs 6 hrs 55 min">
+<img src="docs/bench-15x15-with-tiers.png" width="500" alt="A 15x15 benchmark grid rendered as colored cells: light gray fill cells, near-black blocks, purple wild cells, prefilled letters spelling RECORDBREAKER, and two color-coded scan-order tier regions (a red tier-0 block in the northwest and a gold tier-1 hub in the center)">
 
-*Single-threaded exhaustive search on two wide-open benchmark grids — details in [How Orca Works](https://rainjacket.github.io/orca-solver/#benchmarks).*
+*One of the included benchmark grids ([`bench_15x15_with_tiers.grid`](grids/bench_15x15_with_tiers.grid)): prefilled letters, wild cells (purple), and scan-order tiers `0` and `1` steering where the solver branches first.*
 
 ## Installation
 
