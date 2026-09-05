@@ -922,8 +922,8 @@
     /* ── Fill animation ── */
 
     // Render animation grid. Uppercase=anim-cell (gets ID), lowercase=prefilled (no ID).
-    // Returns { branches: [id,...], propagated: [id,...] } for animation control.
-    function renderAnimGrid(el, gridStr, prefix, branchCoords) {
+    // Keep propagation batches aligned with their preceding branch decision.
+    function renderAnimGrid(el, gridStr, prefix, branchCoords, forcedBatches) {
         var lines = gridStr.trim().split('\n');
         var branchSet = {};
         branchCoords.forEach(function(b) { branchSet[b[0] + ',' + b[1]] = true; });
@@ -950,7 +950,10 @@
         document.getElementById(el).querySelector('table').innerHTML = html;
         return {
             branches: branchCoords.map(function(b) { return prefix + '-' + b[0] + '-' + b[1]; }),
-            propagated: propagated
+            propagated: propagated,
+            forcedBatches: forcedBatches.map(function(batch) {
+                return batch.map(function(cell) { return prefix + '-' + cell[0] + '-' + cell[1]; });
+            })
         };
     }
 
@@ -974,31 +977,27 @@
         var el = document.getElementById(id);
         var data = animData[id];
         var delay = 0;
-        var branchInterval = 600; // ms between branch decisions
-        var propDelay;             // ms for propagated cells (staggered)
+        var branchInterval = 600; // slower explicit decisions
+        var propInterval = 50;    // fast stagger within each propagation batch
 
-        // Branch decisions: appear one by one
-        data.branches.forEach(function(cid, i) {
+        function reveal(cid, color, interval) {
+            // Each cell waits its own interval after the previous cell starts.
+            delay += interval;
             var c = document.getElementById(cid);
             if (c) {
                 c.style.animationDelay = delay + 'ms';
-                c.style.background = 'var(--red)';
+                c.style.background = color;
                 c.style.color = 'var(--bg)';
             }
-            delay += branchInterval;
-        });
+        }
 
-        // After all branches, pause then reveal propagated cells in a wave
-        delay += 400;
-        propDelay = delay;
-        var propInterval = 25; // fast stagger
-        data.propagated.forEach(function(cid, i) {
-            var c = document.getElementById(cid);
-            if (c) {
-                c.style.animationDelay = (propDelay + i * propInterval) + 'ms';
-                c.style.background = 'var(--green)';
-                c.style.color = 'var(--bg)';
-            }
+        // Each choice propagates to a fixed point before the next choice.
+        data.branches.forEach(function(cid, i) {
+            reveal(cid, 'var(--red)', i === 0 ? 300 : branchInterval);
+            var batch = data.forcedBatches[i];
+            batch.forEach(function(forcedId) {
+                reveal(forcedId, 'var(--green)', propInterval);
+            });
         });
 
         // Trigger animations
@@ -2108,6 +2107,8 @@ renderGridSvg('grid15s',
 </div>
 
 <script>
+// wl-q.dict replay: 12 decisions, 69 forced cells; ONDA alone forces none.
+// Batch boundaries are solver-derived; cells within each batch use row order.
 var animData = { anim15: renderAnimGrid('anim15',
     '*****H###******\n' +
     '*****AT##******\n' +
@@ -2124,7 +2125,20 @@ var animData = { anim15: renderAnimGrid('anim15',
     '******#ESI*****\n' +
     '******##EN*****\n' +
     '******###G*****',
-    'a15', [[7,5],[8,8],[5,8],[6,8],[6,5],[9,8],[9,5],[4,5],[8,5],[8,9],[5,4],[7,12]])
+    'a15', [[7,5],[8,8],[5,8],[6,8],[6,5],[9,8],[9,5],[4,5],[8,5],[8,9],[5,4],[7,12]], [
+        [[7,2],[7,3],[7,4],[7,10],[7,11]],
+        [],
+        [],
+        [],
+        [],
+        [[3,8],[4,8],[10,8],[11,8],[12,8],[13,8]],
+        [],
+        [[0,5]],
+        [[1,5],[2,5],[3,5],[5,5],[10,5]],
+        [[1,6],[2,6],[2,7],[3,6],[3,7],[4,6],[4,7],[4,9],[5,6],[5,7],[5,9],[6,3],[6,4],[6,6],[6,7],[6,9],[6,10],[6,11],[6,12],[6,13],[8,1],[8,2],[8,3],[8,4],[8,6],[8,7],[8,10],[8,11],[9,0],[9,1],[9,2],[9,3],[9,4],[9,6],[9,7],[9,9],[9,10],[10,6],[10,7],[10,9],[11,6],[11,7],[11,9],[12,7],[12,9],[13,9],[14,9]],
+        [[5,10],[5,11],[5,12],[5,13],[5,14]],
+        []
+    ])
 };
 </script>
 
