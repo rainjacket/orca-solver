@@ -2365,32 +2365,32 @@ var animData = { anim15: renderAnimGrid('anim15',
     <tbody>
         <tr>
             <td><code>propagate_from_slots</code> &mdash; filter build, intersection</td>
-            <td>83.5%</td>
-            <td>82.0%</td>
+            <td>77.5%</td>
+            <td>76.5%</td>
         </tr>
         <tr>
             <td><code>_platform_memmove</code> &mdash; filter copy, domain backup</td>
-            <td>9.4%</td>
-            <td>9.0%</td>
+            <td>14.2%</td>
+            <td>13.1%</td>
         </tr>
         <tr>
             <td><code>compute_letter_counts_at</code> &mdash; crossing selection heuristic</td>
-            <td>4.3%</td>
-            <td>6.4%</td>
+            <td>5.5%</td>
+            <td>7.7%</td>
         </tr>
         <tr>
             <td><code>save_domain</code> &mdash; trail bookkeeping</td>
-            <td>1.2%</td>
+            <td>1.0%</td>
             <td>1.1%</td>
         </tr>
         <tr>
             <td>Search control, backtracking, malloc/free</td>
+            <td>1.8%</td>
             <td>1.6%</td>
-            <td>1.5%</td>
         </tr>
     </tbody>
 </table>
-<p class="bench-note">Over 92% of wall time is in the propagation loop and its memory copies. The inner loop is just bitwise AND, OR, popcount, and bulk copy &mdash; all of which compile to wide vector instructions.</p>
+<p class="bench-note">About 90&ndash;92% of wall time is in the propagation loop and its memory copies. The inner loop is just bitwise AND, OR, popcount, and bulk copy &mdash; all of which compile to wide vector instructions.</p>
 
 <!-- ============================================================ -->
 <h2 id="extra">6. Extra Constraints</h2>
