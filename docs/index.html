@@ -2309,16 +2309,15 @@ var animData = { anim15: renderAnimGrid('anim15',
 <ul>
 
 <li>
-    <strong>Small domain carve-out.</strong> For small domains (under 2,000 words),
-    it scans words directly. The solver uses bitset intersections for large domains only.
-</li>
-
-<li>
-    <b>Precomputed letter combinations.</b> To build a filter, we must OR together the bitsets for the allowed letters at a position. To optimize this, Orca groups the alphabet into ABCDE, FGHIJ, etc., and precomputes the OR for each group's 32 possible subsets. The filter can then be assembled from at most six bitsets instead of up to 26.
+    <strong>Small domain carve-out.</strong> To discover possible crossing letters, Orca scans remaining words directly for domains of up to 2,000 candidates; otherwise, it tests overlap with each letter-at-position bitset. Filtering the neighboring domain uses bitsets in both cases.
 </li>
 
 <li>
     <strong>Skipping redundant work.</strong> If slots A and B cross, we have two <em>arcs</em>: A→B ("filter B based on A's letters") and B→A ("filter A based on B's letters"). A per-arc cache records what letters were possible last time; if nothing changed, skip.
+</li>
+
+<li>
+    <b>Precomputed letter combinations.</b> Once the viable crossing letters are known, Orca builds a filter by ORing their letter-at-position bitsets. To speed this up, it groups the alphabet into ABCDE, FGHIJ, etc., and precomputes the OR for each group's 32 possible subsets. The filter can then be assembled from at most six bitsets instead of up to 26.
 </li>
 
 <li>
