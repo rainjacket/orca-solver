@@ -2314,6 +2314,10 @@ var animData = { anim15: renderAnimGrid('anim15',
 </li>
 
 <li>
+    <b>Precomputed letter combinations.</b> To build a filter, we must OR together the bitsets for the allowed letters at a position. To optimize this, Orca groups the alphabet into ABCDE, FGHIJ, etc., and precomputes the OR for each group's 32 possible subsets. The filter can then be assembled from at most six bitsets instead of up to 26.
+</li>
+
+<li>
     <strong>Skipping redundant work.</strong> If slots A and B cross, we have two <em>arcs</em>: A→B ("filter B based on A's letters") and B→A ("filter A based on B's letters"). A per-arc cache records what letters were possible last time; if nothing changed, skip.
 </li>
 
