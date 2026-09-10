@@ -7,10 +7,14 @@ use anyhow::{bail, Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
+use std::sync::{Arc, OnceLock};
 
 /// All words of a given length, with precomputed bitset indexes for fast filtering.
 #[derive(Debug, Clone)]
 pub struct LengthBucket {
+    /// Immutable five-letter union tables, allocated only at positions used by filtering.
+    /// Clones and concurrent searches share each position's one-time initialization.
+    unions: Arc<[OnceLock<Box<[u64]>>]>,
     /// All words of this length, indexed by word_id.
     pub words: Vec<String>,
     /// `letter_bits[position][letter]` -> bitset of word_ids that have `letter` at `position`.
@@ -27,6 +31,60 @@ impl LengthBucket {
     /// Word length for this bucket.
     pub fn word_len(&self) -> usize {
         self.letter_bits.len()
+    }
+
+    /// Materialize the words whose letter at `pos` belongs to the 26-bit `allowed` mask.
+    /// ABCDE, FGHIJ, KLMNO, PQRST and UVWXY each need one lookup, followed
+    /// by at most four OR passes (plus Z). Single letters use the existing index.
+    pub fn letter_union(&self, pos: usize, allowed: u32, out: &mut [u64]) {
+        debug_assert_eq!(allowed >> 26, 0);
+        debug_assert_eq!(out.len(), self.all.blocks().len());
+        if allowed == 0 {
+            out.fill(0);
+            return;
+        }
+        if allowed.is_power_of_two() {
+            out.copy_from_slice(self.letter_bits[pos][allowed.trailing_zeros() as usize].blocks());
+            return;
+        }
+        let n = out.len();
+        let table = self.unions[pos].get_or_init(|| {
+            let mut table = vec![0; 5 * 32 * n];
+            for group in 0..5 {
+                for subset in 1usize..32 {
+                    let previous = subset & (subset - 1);
+                    let letter = group * 5 + subset.trailing_zeros() as usize;
+                    let single = self.letter_bits[pos][letter].blocks();
+                    for b in 0..n {
+                        table[(group * 32 + subset) * n + b] =
+                            table[(group * 32 + previous) * n + b] | single[b];
+                    }
+                }
+            }
+            table.into_boxed_slice()
+        });
+        let mut remaining = allowed;
+        let mut first = true;
+        while remaining != 0 {
+            let group = remaining.trailing_zeros() as usize / 5;
+            let shift = group * 5;
+            let subset = (remaining >> shift) as usize & 31;
+            remaining &= !(31 << shift);
+            let source = if group == 5 {
+                self.letter_bits[pos][25].blocks()
+            } else {
+                let start = (group * 32 + subset) * n;
+                &table[start..start + n]
+            };
+            if first {
+                out.copy_from_slice(source);
+                first = false;
+            } else {
+                for (dst, src) in out.iter_mut().zip(source) {
+                    *dst |= src;
+                }
+            }
+        }
     }
 
     /// Get the set of candidate word_ids matching a partial pattern.
@@ -162,6 +220,7 @@ impl Dictionary {
             }
 
             buckets[len] = Some(LengthBucket {
+                unions: (0..len).map(|_| OnceLock::new()).collect(),
                 words,
                 letter_bits,
                 all,
@@ -375,5 +434,89 @@ mod tests {
                 assert_eq!(bucket.word_bytes[id * 3 + pos], ch - b'A');
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod union_tests {
+    use super::*;
+
+    fn dictionary() -> Dictionary {
+        // Multiple blocks, a partial tail, and all 26 letters represented.
+        let text: String = (0..137)
+            .map(|i| {
+                format!(
+                    "{}{}{};50\n",
+                    (b'A' + (i / 26) as u8) as char,
+                    (b'A' + (i % 26) as u8) as char,
+                    (b'A' + ((i * 7) % 26) as u8) as char
+                )
+            })
+            .collect();
+        Dictionary::parse(&text).unwrap()
+    }
+
+    #[test]
+    fn grouped_unions_match_letter_indexes() {
+        let dict = dictionary();
+        let bucket = dict.bucket(3).unwrap();
+        let all = (1u32 << 26) - 1;
+        let mut masks = vec![0, all];
+        for letter in 0..26 {
+            masks.extend([1 << letter, all ^ (1 << letter)]);
+        }
+        // Every subset in every full group, including combinations with Z.
+        for group in 0..5 {
+            for subset in 0..32 {
+                masks.extend([subset << (5 * group), (subset << (5 * group)) | (1 << 25)]);
+            }
+        }
+        let mut random = 42u32;
+        for _ in 0..2000 {
+            random = random.wrapping_mul(1664525).wrapping_add(1013904223);
+            masks.push(random & all);
+        }
+        for pos in 0..3 {
+            for &mask in &masks {
+                let mut expected = vec![0; bucket.all.blocks().len()];
+                for letter in 0..26 {
+                    if mask & (1 << letter) != 0 {
+                        for (dst, src) in expected
+                            .iter_mut()
+                            .zip(bucket.letter_bits[pos][letter].blocks())
+                        {
+                            *dst |= src;
+                        }
+                    }
+                }
+                let mut actual = vec![u64::MAX; expected.len()];
+                bucket.letter_union(pos, mask, &mut actual);
+                assert_eq!(actual, expected, "position {pos}, mask {mask:#x}");
+            }
+        }
+    }
+
+    #[test]
+    fn union_tables_are_lazy_and_shared_between_clones() {
+        let dict = dictionary();
+        let bucket = dict.bucket(3).unwrap();
+        let clone = bucket.clone();
+        let mut out = vec![0; bucket.all.blocks().len()];
+        bucket.letter_union(0, 1, &mut out);
+        assert!(bucket.unions.iter().all(|cell| cell.get().is_none()));
+        std::thread::scope(|scope| {
+            for b in [bucket, &clone] {
+                scope.spawn(move || {
+                    let mut out = vec![0; b.all.blocks().len()];
+                    b.letter_union(1, 3, &mut out);
+                });
+            }
+        });
+        assert!(bucket.unions[0].get().is_none());
+        assert!(bucket.unions[2].get().is_none());
+        assert!(std::ptr::eq(
+            bucket.unions[1].get().unwrap().as_ptr(),
+            clone.unions[1].get().unwrap().as_ptr()
+        ));
     }
 }

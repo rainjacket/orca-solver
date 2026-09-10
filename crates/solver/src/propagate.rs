@@ -171,31 +171,13 @@ fn propagate_inner(
             letters_cache[cache_idx] = possible_letters;
 
             // Build filter in scratch buffer.
-            // Uses trailing_zeros to iterate only the set letters (typically 3-5 of 26),
-            // copies the first letter's bits directly (no memset), then ORs the rest.
+            // Five-letter subset tables replace up to 26 letter-index passes with at most six.
             let num_blocks = state.domains[neighbor_id].candidates.blocks().len();
             if filter_scratch.len() < num_blocks {
                 filter_scratch.resize(num_blocks, 0);
             }
             let filter = &mut filter_scratch[..num_blocks];
-            {
-                let mut letters = possible_letters;
-                // First letter: copy (no memset needed)
-                let first_letter = letters.trailing_zeros() as usize;
-                letters &= letters - 1;
-                filter.copy_from_slice(
-                    neighbor_bucket.letter_bits[pos_in_neighbor][first_letter].blocks(),
-                );
-                // Remaining letters: OR
-                while letters != 0 {
-                    let letter = letters.trailing_zeros() as usize;
-                    letters &= letters - 1;
-                    let lb = neighbor_bucket.letter_bits[pos_in_neighbor][letter].blocks();
-                    for (f, &l) in filter.iter_mut().zip(lb.iter()) {
-                        *f |= l;
-                    }
-                }
-            }
+            neighbor_bucket.letter_union(pos_in_neighbor, possible_letters, filter);
 
             // Quick check: would intersection change the domain?
             // If domain is already a subset of filter, the intersection is a no-op.
