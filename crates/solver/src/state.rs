@@ -6,6 +6,9 @@ use orca_core::grid::Grid;
 
 use crate::stats::SolverStats;
 
+/// Maximum slot length supported by propagation letter masks.
+pub(crate) const MAX_SLOT_LEN: usize = 32;
+
 /// Domain for a single slot: the set of candidate word_ids that are still valid.
 #[derive(Debug, Clone)]
 pub struct SlotDomain {
@@ -13,12 +16,20 @@ pub struct SlotDomain {
     pub candidates: BitSet,
     /// Cached count of candidates (avoids recomputing popcount).
     pub count: u32,
+    /// Conservative viable-letter bounds, restored with the candidate snapshot.
+    /// Inline storage avoids an extra allocation per saved domain. Only crossing
+    /// positions are read; 32 matches propagation's maximum supported slot length.
+    pub(crate) letter_masks: [u32; MAX_SLOT_LEN],
 }
 
 impl SlotDomain {
     pub fn new(candidates: BitSet) -> Self {
         let count = candidates.count_ones();
-        SlotDomain { candidates, count }
+        SlotDomain {
+            candidates,
+            count,
+            letter_masks: [(1 << 26) - 1; MAX_SLOT_LEN],
+        }
     }
 
     /// Intersect the domain with a candidate set (recomputes count from scratch).
@@ -74,8 +85,11 @@ pub struct SolverState {
     // Reusable scratch buffers for propagation (avoid per-node allocation).
     /// Bitset tracking which slots are in the propagation queue.
     pub(crate) prop_queue_bits: Vec<u64>,
-    /// Cache of possible_letters per directed arc (crossing_idx * 2 + side).
+    /// Last applied letter mask per directed arc (crossing_idx * 2 + side).
+    /// Reset each propagation call: restored neighbors may need filtering again.
     pub(crate) prop_letters_cache: Vec<u32>,
+    /// Positive witnesses are revalidated against the current domain, not trailed.
+    pub(crate) prop_witnesses: Vec<crate::witnesses::Witnesses>,
     /// Scratch buffer for filter construction.
     pub(crate) prop_filter: Vec<u64>,
 }
@@ -89,6 +103,7 @@ impl SolverState {
             stats: SolverStats::new(),
             prop_queue_bits: Vec::new(),
             prop_letters_cache: Vec::new(),
+            prop_witnesses: Vec::new(),
             prop_filter: Vec::new(),
         }
     }

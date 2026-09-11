@@ -16,8 +16,11 @@ Each position's flat table is initialized once, only when a multi-letter filter
 actually uses it. `Arc` and `OnceLock` share initialization and storage across
 cloned buckets and concurrent searches. Payload per initialized position is
 `160 * ceil(words_of_this_length / 64) * 8` bytes. Tables live with the dictionary.
-The two 2,000-candidate cutoffs, propagation, snapshots, and search order are
-unchanged. No complement/density tuning or runtime configuration is added.
+This measurement predates persistent discovery caches: at the time, both
+discovery and exact counting used 2,000-candidate cutoffs. The current
+[propagation implementation](propagation.md) uses masks, witnesses and a 512
+discovery cutoff; exact counts remain at 2,000. The filter tables themselves
+are unchanged. No complement/density policy or runtime configuration is added.
 
 ## Measurements
 
