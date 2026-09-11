@@ -2303,32 +2303,36 @@ var animData = { anim15: renderAnimGrid('anim15',
 </div>
 
 <p>
-    Several additional techniques further speed up the propagation loop:
+    Several additional techniques speed up these two steps. Each domain tracks which of its 64-bit chunks still contain candidates.
 </p>
 
+<p><strong>1. Discover viable crossing letters in A.</strong></p>
+
 <ul>
-
 <li>
-    <strong>Small domain carve-out.</strong> To discover possible crossing letters, Orca scans remaining words directly for domains of up to 512 candidates. Larger domains use bitset intersections to check the viability of each remaining letter that hadn&rsquo;t previously been ruled out.
+    <strong>Small domain carve-out.</strong> With up to 512 candidates, Orca scans A&rsquo;s remaining words, skipping empty chunks, to discover letters at all crossing positions in one pass. Larger domains use bitset support checks, skipping letters previously ruled out.
 </li>
-
 <li>
     <strong>Remembering supporting words.</strong> For each possible crossing letter, Orca remembers one word that supports it. If that word is still in the domain, the letter is still possible; we can skip the full bitset validation. These witnesses safely survive backtracking because we always check that the word remains present.
 </li>
-
-<li>
-    <strong>Skipping redundant work.</strong> If slots A and B cross, we have two <em>arcs</em>: A→B ("filter B based on A's letters") and B→A ("filter A based on B's letters"). A per-arc cache records what letters were possible last time; if nothing changed, skip.
-</li>
-
-<li>
-    <b>Precomputed letter combinations.</b> Once the viable crossing letters are known, Orca builds a filter by ORing their letter-at-position bitsets. To speed this up, it groups the alphabet into <code>AEHIOU / BCGMP / DLNRST / FKVWY / JXZ / Q</code>, and precomputes the OR for each group's possible subsets. The filter can then be assembled from at most six bitsets instead of up to 26.
-</li>
-
 </ul>
 
-<p>
-    Together, these avoid the vast majority of slow and unnecessary calculations during propagation.
-</p>
+<p><strong>2. Filter B using those letters.</strong></p>
+
+<ul>
+<li>
+    <strong>Skipping redundant work.</strong> Each directed crossing A&rarr;B records the letters last used to filter B during this propagation call. If those letters haven&rsquo;t changed, skip.
+</li>
+<li>
+    <strong>Precomputed letter combinations.</strong> Orca groups the alphabet into <code>AEHIOU / BCGMP / DLNRST / FKVWY / JXZ / Q</code> and precomputes the OR for each group&rsquo;s possible subsets. The allowed-letter filter therefore combines at most six bitsets instead of up to 26.
+</li>
+<li>
+    <strong>Building and applying together.</strong> Orca never materializes the whole filter. It builds each 64-bit chunk and immediately ANDs it into B&rsquo;s domain, counting removed candidates along the way. At the end, it continues propagation only if B shrank.
+</li>
+<li>
+    <strong>Skipping empty chunks.</strong> If fewer than 25% of B&rsquo;s chunks are nonempty, Orca builds and applies the filter only at those chunks. Otherwise, a full bitset scan is faster.
+</li>
+</ul>
 
 <h3>Backtracking</h3>
 
