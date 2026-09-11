@@ -27,11 +27,33 @@ still use a **2,000-candidate cutoff**. Witnesses establish existence, not count
 they do not replace the exact counts needed by the branching heuristic.
 
 For the neighbor, build the OR of the viable-letter indexes using the existing
-[letter-group subset tables](letter-group-filters.md), then AND with its domain.
+[letter-group subset tables](#letter-group-filter-tables), then AND with its domain.
 Skip all-26-letter filters and unchanged filters within the same propagation
 call. Otherwise save the domain, apply the intersection and count removed bits
 in one pass. If none were removed, skip the statistics update and enqueueing.
 There is no separate subset precheck. Filter construction has no 512 cutoff.
+
+## Letter-group filter tables
+
+Filter construction uses the fixed groups **AEHIOU / BCGMP / DLNRST / FKVWY /
+JXZ / Q**. Each touched group contributes one precomputed bitset; Q reuses its
+existing letter index. Copy the first bitset and OR the rest, using at most six
+source bitsets and five OR passes. Zero and singleton masks bypass the tables.
+
+The five non-singleton groups have 6, 5, 6, 5 and 3 letters, requiring
+64 + 32 + 64 + 32 + 8 = **200 subset rows**, including empty subsets.
+Each position's flat table is initialized lazily through `OnceLock` and shared
+across bucket clones and concurrent searches through `Arc`. Tables are immutable
+and are not copied into search states or backtracking snapshots.
+
+Payload per initialized position is `200 * ceil(word_count / 64) * 8` bytes,
+where `word_count` is the number of dictionary words of that slot length.
+The grouping was selected using observed filter masks to reduce the number of
+source bitsets read; it is fixed, with no runtime tuning or policy switch.
+
+Tests compare grouped filters with independent per-letter unions, including
+every subset of each group with and without Q, singleton and complement masks,
+random cross-group masks, partial tail blocks, and shared lazy initialization.
 
 ## Three kinds of cached information
 
@@ -80,5 +102,3 @@ These are unconditional production paths: no experimental features, runtime
 policy switches or alternate cache implementations. Tests cover nested restores,
 mask refinement without candidate changes, cloned state, stale witnesses,
 propagation failure and sibling branches, and transitions at 512/513 candidates.
-See [production verification](propagation-validation.md) for benchmark scope and
-search-equivalence checks.
