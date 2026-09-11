@@ -2309,7 +2309,11 @@ var animData = { anim15: renderAnimGrid('anim15',
 <ul>
 
 <li>
-    <strong>Small domain carve-out.</strong> To discover possible crossing letters, Orca scans remaining words directly for domains of up to 2,000 candidates; otherwise, it tests overlap with each letter-at-position bitset. Filtering the neighboring domain uses bitsets in both cases.
+    <strong>Small domain carve-out.</strong> To discover possible crossing letters, Orca scans remaining words directly for domains of up to 512 candidates. Larger domains use bitset intersections to check the viability of each remaining letter that hadn&rsquo;t previously been ruled out.
+</li>
+
+<li>
+    <strong>Remembering supporting words.</strong> For each possible crossing letter, Orca remembers one word that supports it. If that word is still in the domain, the letter is still possible; we can skip the full bitset validation. These witnesses safely survive backtracking because we always check that the word remains present.
 </li>
 
 <li>
