@@ -6,8 +6,7 @@ use orca_core::grid::Grid;
 
 use crate::stats::SolverStats;
 
-/// Maximum slot length supported by propagation letter masks.
-pub(crate) const MAX_SLOT_LEN: usize = 32;
+pub(crate) use orca_core::grid::MAX_SLOT_LEN;
 
 /// Domain for a single slot: the set of candidate word_ids that are still valid.
 #[derive(Debug, Clone)]
@@ -32,24 +31,24 @@ impl SlotDomain {
         }
     }
 
-    /// Intersect the domain with a candidate set (recomputes count from scratch).
+    /// Intersect candidates and maintain the cached count in the same pass.
     pub fn intersect(&mut self, other: &BitSet) {
-        self.candidates.and_with(other);
-        self.count = self.candidates.count_ones();
+        self.intersect_blocks(other.blocks());
     }
 
-    /// Intersect domain with a filter bitset, tracking removed bits for an
-    /// incremental count update. Faster than `intersect` (which recomputes
-    /// popcount from scratch) when the domain is large.
-    pub fn intersect_incremental(&mut self, filter: &BitSet) {
-        let domain_blocks = self.candidates.blocks_mut();
-        let filter_blocks = filter.blocks();
-        let mut count_removed: u32 = 0;
-        for (d, &f) in domain_blocks.iter_mut().zip(filter_blocks.iter()) {
-            count_removed += (*d & !f).count_ones();
-            *d &= f;
+    /// Shared hot-path primitive. Snapshotting and propagation bookkeeping are
+    /// the caller's responsibility. Returns the number of removed candidates.
+    #[inline]
+    pub(crate) fn intersect_blocks(&mut self, filter: &[u64]) -> u32 {
+        let blocks = self.candidates.blocks_mut();
+        debug_assert_eq!(blocks.len(), filter.len());
+        let mut removed = 0;
+        for (domain, &allowed) in blocks.iter_mut().zip(filter) {
+            removed += (*domain & !allowed).count_ones();
+            *domain &= allowed;
         }
-        self.count -= count_removed;
+        self.count -= removed;
+        removed
     }
 
     pub fn is_empty(&self) -> bool {
@@ -227,7 +226,9 @@ mod tests {
         let filter = &bucket.letter_bits[0][2]; // words with C at position 0
 
         d1.intersect(filter);
-        d2.intersect_incremental(filter);
+        let removed = d2.intersect_blocks(filter.blocks());
+        assert_eq!(removed, bucket.all.count_ones() - filter.count_ones());
+        assert_eq!(d2.intersect_blocks(filter.blocks()), 0);
 
         assert_eq!(d1.count, d2.count);
         assert_eq!(d1.candidates.count_ones(), d2.candidates.count_ones());

@@ -1,4 +1,4 @@
-//! Work-stealing parallel search: generates partitions, then executes each
+//! Shared-queue parallel search: generates partitions, then executes each
 //! as an independent rayon task with mid-search splitting for load balancing.
 
 use std::collections::VecDeque;
@@ -134,12 +134,11 @@ fn solve_parallel_inner(
             .store(initial_count as u64, Ordering::Relaxed);
     }
 
-    // Shared work queue with condvar for work-stealing
+    // Shared work queue with a condition variable for idle workers
     let queue: Arc<(Mutex<VecDeque<PartitionSpec>>, Condvar)> =
         Arc::new((Mutex::new(VecDeque::from(partition_specs)), Condvar::new()));
     let active_workers = Arc::new(AtomicU64::new(0));
     let total_solutions = Arc::new(AtomicU64::new(0));
-    let total_nodes = Arc::new(AtomicU64::new(0));
     // Set when any partition is discarded unexecuted (solution cap reached,
     // or a sub-partition failed to parse). If set, the search must not be
     // reported as exhausted — part of the space was never explored.
@@ -162,7 +161,6 @@ fn solve_parallel_inner(
             let queue = Arc::clone(&queue);
             let active_workers = Arc::clone(&active_workers);
             let total_solutions = Arc::clone(&total_solutions);
-            let total_nodes = Arc::clone(&total_nodes);
 
             let results = Arc::clone(&results);
             let dropped_work = Arc::clone(&dropped_work);
@@ -285,7 +283,6 @@ fn solve_parallel_inner(
                     }
 
                     let nodes = result.stats.nodes;
-                    total_nodes.fetch_add(nodes, Ordering::Relaxed);
 
                     // Update progress counters for display thread
                     if let Some(ref p) = progress {

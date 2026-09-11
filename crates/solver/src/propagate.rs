@@ -194,7 +194,7 @@ fn propagate_inner(
             letters_cache[cache_idx] = possible_letters;
 
             // Build filter in scratch buffer.
-            // Five-letter subset tables replace up to 26 letter-index passes with at most six.
+            // Letter-group subset tables replace up to 26 letter-index passes with at most six.
             let num_blocks = state.domains[neighbor_id].candidates.blocks().len();
             if filter_scratch.len() < num_blocks {
                 filter_scratch.resize(num_blocks, 0);
@@ -206,20 +206,12 @@ fn propagate_inner(
             // saves at this decision level, including unchanged intersections.
             state.save_domain(neighbor_id);
 
-            // Apply intersection with incremental count (branchless for SIMD vectorization)
-            let old_count = state.domains[neighbor_id].count;
-            let domain_blocks_mut = state.domains[neighbor_id].candidates.blocks_mut();
-            let mut count_removed: u32 = 0;
-            for (d, &f) in domain_blocks_mut.iter_mut().zip(filter.iter()) {
-                count_removed += (*d & !f).count_ones();
-                *d &= f;
-            }
+            let count_removed = state.domains[neighbor_id].intersect_blocks(filter);
             if count_removed == 0 {
                 continue;
             }
             state.stats.propagations += 1;
-            let new_count = old_count - count_removed;
-            state.domains[neighbor_id].count = new_count;
+            let new_count = state.domains[neighbor_id].count;
 
             if new_count == 0 {
                 state.stats.wipeouts += 1;
