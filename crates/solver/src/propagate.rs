@@ -1,6 +1,6 @@
 //! AC-3 constraint propagation with priority queue (smallest domain first).
-//! The hot loop filters neighbor domains via precomputed `letter_bits` bitsets,
-//! using scratch buffers to avoid per-node allocation.
+//! Discover supported letters, then restrict neighboring word domains. Domain
+//! storage owns intersection strategy; snapshots and scheduling stay here.
 
 use crate::constraint::ConstraintGraph;
 use orca_core::dict::Dictionary;
@@ -13,7 +13,7 @@ use crate::state::{SolverState, MAX_SLOT_LEN};
 const ALL_LETTERS_MASK: u32 = (1 << 26) - 1;
 
 /// Cutoff for standalone discovery and exact heuristic counts (without witnesses).
-const SMALL_DOMAIN_THRESHOLD: u32 = 2000;
+const STANDALONE_ITERATION_THRESHOLD: u32 = 2000;
 /// Propagation discovery uses cached witnesses above this count. Standalone
 /// discovery and exact heuristic counts keep their independent 2,000 cutoff.
 const PROPAGATION_ITERATION_THRESHOLD: u32 = 512;
@@ -58,20 +58,27 @@ pub fn propagate_from_slots(
     // Take scratch buffers out of state to avoid borrow conflicts,
     // then put them back at the end. The buffers grow once and are reused.
     let mut in_queue = std::mem::take(&mut state.prop_queue_bits);
-    let mut letters_cache = std::mem::take(&mut state.prop_letters_cache);
+    let mut last_applied_letters = std::mem::take(&mut state.last_applied_letters);
 
     in_queue.resize(num_queue_blocks, 0);
     in_queue[..num_queue_blocks].fill(0);
     for &slot in changed_slots {
         in_queue[slot / 64] |= 1u64 << (slot % 64);
     }
-    letters_cache.resize(cache_size, ALL_LETTERS_MASK);
-    letters_cache[..cache_size].fill(ALL_LETTERS_MASK);
+    last_applied_letters.resize(cache_size, ALL_LETTERS_MASK);
+    last_applied_letters[..cache_size].fill(ALL_LETTERS_MASK);
 
-    let result = propagate_inner(state, graph, dict, grid, &mut in_queue, &mut letters_cache);
+    let result = propagate_inner(
+        state,
+        graph,
+        dict,
+        grid,
+        &mut in_queue,
+        &mut last_applied_letters,
+    );
 
     state.prop_queue_bits = in_queue;
-    state.prop_letters_cache = letters_cache;
+    state.last_applied_letters = last_applied_letters;
 
     result
 }
@@ -84,7 +91,7 @@ fn propagate_inner(
     dict: &Dictionary,
     grid: &Grid,
     in_queue: &mut [u64],
-    letters_cache: &mut [u32],
+    last_applied_letters: &mut [u32],
 ) -> bool {
     loop {
         // Pop the slot with the smallest domain from the queue.
@@ -95,7 +102,7 @@ fn propagate_inner(
             let mut m = *mask;
             while m != 0 {
                 let bit = block_idx * 64 + m.trailing_zeros() as usize;
-                let count = state.domains[bit].count;
+                let count = state.domains[bit].count();
                 if count < best_count {
                     best_count = count;
                     best_slot = bit;
@@ -115,45 +122,8 @@ fn propagate_inner(
             None => return false,
         };
 
-        // Batch-compute possible_letters for all crossing positions of this slot.
-        // For small domains, this iterates the domain once instead of once per crossing.
-        let mut possible_at_pos = state.domains[slot_id].letter_masks;
-        let mut positions_needed: u32 = 0;
-        for &(crossing_idx, is_slot_a) in &graph.neighbors[slot_id] {
-            let (_, pos_in_this, _) = graph.crossing_info(crossing_idx, is_slot_a);
-            positions_needed |= 1u32 << pos_in_this;
-            // Within this call, domains only shrink: a previously unsupported
-            // letter cannot return. The arc masks reset to all letters per call.
-            possible_at_pos[pos_in_this] &= letters_cache[crossing_idx * 2 + is_slot_a as usize];
-        }
-
-        let use_witnesses = state.domains[slot_id].count > PROPAGATION_ITERATION_THRESHOLD;
-        if use_witnesses {
-            for &(crossing_idx, is_slot_a) in &graph.neighbors[slot_id] {
-                let (_, pos, _) = graph.crossing_info(crossing_idx, is_slot_a);
-                possible_at_pos[pos] = state.prop_witnesses[crossing_idx * 2 + is_slot_a as usize]
-                    .letters(
-                        &state.domains[slot_id].candidates,
-                        bucket,
-                        pos,
-                        possible_at_pos[pos],
-                    );
-            }
-        } else if positions_needed != 0 {
-            batch_compute_possible_letters(
-                &state.domains[slot_id].candidates,
-                bucket,
-                positions_needed,
-                &mut possible_at_pos,
-            );
-        }
-
-        // Refinement alone does not need a new snapshot: if candidates have
-        // changed at this decision level, their pre-change domain (including
-        // masks) is already saved. Otherwise this refinement is also valid
-        // for the unchanged parent domain. Restoring an older, broader mask
-        // is safe. Candidate mutations MUST still save the domain first.
-        state.domains[slot_id].letter_masks = possible_at_pos;
+        let possible_at_pos =
+            discover_crossing_letters(state, graph, bucket, slot_id, last_applied_letters);
 
         // For each crossing neighbor of this slot
         for &(crossing_idx, is_slot_a) in &graph.neighbors[slot_id] {
@@ -177,25 +147,21 @@ fn propagate_inner(
             // the filter is identical and the neighbor's domain (which only shrinks) is
             // still a subset — skip the expensive filter build + intersection.
             let cache_idx = crossing_idx * 2 + (is_slot_a as usize);
-            if possible_letters == letters_cache[cache_idx] {
+            if possible_letters == last_applied_letters[cache_idx] {
                 continue;
             }
-            letters_cache[cache_idx] = possible_letters;
+            last_applied_letters[cache_idx] = possible_letters;
 
             // Snapshot before the fused union/intersection writes the domain.
             state.save_domain(neighbor_id);
             let domain = &mut state.domains[neighbor_id];
-            let count_removed = neighbor_bucket.intersect_letter_union(
-                pos_in_neighbor,
-                possible_letters,
-                domain.candidates.blocks_mut(),
-            );
-            domain.count -= count_removed;
+            let count_removed =
+                domain.restrict_letters(neighbor_bucket, pos_in_neighbor, possible_letters);
             if count_removed == 0 {
                 continue;
             }
             state.stats.propagations += 1;
-            let new_count = state.domains[neighbor_id].count;
+            let new_count = state.domains[neighbor_id].count();
 
             if new_count == 0 {
                 state.stats.wipeouts += 1;
@@ -210,12 +176,63 @@ fn propagate_inner(
     true
 }
 
+/// Resolve supports using restored negative bounds and revalidated positive hints.
+/// The word-iteration cutoff is independent of the neighbor's filtering strategy.
+#[inline]
+fn discover_crossing_letters(
+    state: &mut SolverState,
+    graph: &ConstraintGraph,
+    bucket: &orca_core::dict::LengthBucket,
+    slot_id: usize,
+    last_applied_letters: &[u32],
+) -> [u32; MAX_SLOT_LEN] {
+    let mut possible_at_pos = state.domains[slot_id].letter_masks;
+    let mut positions_needed: u32 = 0;
+    for &(crossing_idx, is_slot_a) in &graph.neighbors[slot_id] {
+        let (_, pos_in_this, _) = graph.crossing_info(crossing_idx, is_slot_a);
+        positions_needed |= 1u32 << pos_in_this;
+        // Within this call, domains only shrink: a previously unsupported
+        // letter cannot return. The arc masks reset to all letters per call.
+        possible_at_pos[pos_in_this] &= last_applied_letters[crossing_idx * 2 + is_slot_a as usize];
+    }
+
+    let use_witnesses = state.domains[slot_id].count() > PROPAGATION_ITERATION_THRESHOLD;
+    if use_witnesses {
+        for &(crossing_idx, is_slot_a) in &graph.neighbors[slot_id] {
+            let (_, pos, _) = graph.crossing_info(crossing_idx, is_slot_a);
+            possible_at_pos[pos] = state.prop_witnesses[crossing_idx * 2 + is_slot_a as usize]
+                .letters(
+                    state.domains[slot_id].candidates(),
+                    bucket,
+                    pos,
+                    possible_at_pos[pos],
+                );
+        }
+    } else if positions_needed != 0 {
+        batch_compute_possible_letters(
+            &state.domains[slot_id],
+            bucket,
+            positions_needed,
+            &mut possible_at_pos,
+        );
+    }
+
+    // Refinement alone does not need a new snapshot: if candidates have
+    // changed at this decision level, their pre-change domain (including
+    // masks) is already saved. Otherwise this refinement is also valid
+    // for the unchanged parent domain. Restoring an older, broader mask
+    // is safe. Candidate mutations MUST still save the domain first.
+    state.domains[slot_id].letter_masks = possible_at_pos;
+
+    possible_at_pos
+}
+
 /// Discover letters at all requested crossing positions in one pass over words.
 /// Used for propagation domains of at most PROPAGATION_ITERATION_THRESHOLD.
 /// Requested positions are overwritten; other positions retain their bounds.
 #[inline]
 fn batch_compute_possible_letters(
-    domain: &orca_core::bitset::BitSet,
+    domain: &crate::state::SlotDomain,
     bucket: &orca_core::dict::LengthBucket,
     positions_needed: u32,
     out: &mut [u32; MAX_SLOT_LEN],
@@ -232,7 +249,7 @@ fn batch_compute_possible_letters(
     let word_len = bucket.word_len();
     let word_bytes = &bucket.word_bytes;
     let mut unsaturated = positions_needed;
-    for word_id in domain.iter_ones() {
+    for word_id in domain.iter_candidates() {
         let base = word_id * word_len;
         let mut mask = unsaturated;
         while mask != 0 {
@@ -253,7 +270,7 @@ fn batch_compute_possible_letters(
 ///
 /// Returns a `[u32; 26]` array where entry `i` is the number of candidate words
 /// that have letter `i` (A=0) at position `pos`. For small domains
-/// (≤SMALL_DOMAIN_THRESHOLD), iterates candidates directly. For large domains,
+/// (≤STANDALONE_ITERATION_THRESHOLD), iterates candidates directly. For large domains,
 /// uses bitset intersection (`count_intersection`) which also returns exact counts.
 #[inline]
 pub fn compute_letter_counts_at(
@@ -263,7 +280,7 @@ pub fn compute_letter_counts_at(
     pos: usize,
 ) -> [u32; 26] {
     let mut counts = [0u32; 26];
-    if count <= SMALL_DOMAIN_THRESHOLD {
+    if count <= STANDALONE_ITERATION_THRESHOLD {
         let word_len = bucket.word_len();
         let word_bytes = &bucket.word_bytes;
         for word_id in domain.iter_ones() {
@@ -292,7 +309,7 @@ pub fn compute_possible_letters_at(
     bucket: &orca_core::dict::LengthBucket,
     pos: usize,
 ) -> u32 {
-    if count <= SMALL_DOMAIN_THRESHOLD {
+    if count <= STANDALONE_ITERATION_THRESHOLD {
         let word_len = bucket.word_len();
         let word_bytes = &bucket.word_bytes;
         let mut letters = 0u32;
@@ -369,16 +386,9 @@ fn remove_letters_from_domain(
         let letter = letters.trailing_zeros() as usize;
         letters &= letters - 1;
         let letter_bits = &bucket.letter_bits[pos][letter];
-        let domain_blocks = state.domains[slot_id].candidates.blocks_mut();
-        let letter_blocks = letter_bits.blocks();
-        let mut count_removed: u32 = 0;
-        for (d, &l) in domain_blocks.iter_mut().zip(letter_blocks.iter()) {
-            count_removed += (*d & l).count_ones();
-            *d &= !l;
-        }
-        state.domains[slot_id].count -= count_removed;
+        state.domains[slot_id].remove(letter_bits);
     }
-    state.domains[slot_id].count > 0
+    state.domains[slot_id].count() > 0
 }
 
 /// Enforce cell-level symmetry: letter(cell_a) ≤ letter(cell_b).
@@ -404,14 +414,14 @@ pub fn enforce_cell_symmetry(
         };
 
         let possible_a = compute_possible_letters_at(
-            &state.domains[cell_a.slot_id].candidates,
-            state.domains[cell_a.slot_id].count,
+            state.domains[cell_a.slot_id].candidates(),
+            state.domains[cell_a.slot_id].count(),
             bucket_a,
             cell_a.pos_in_slot,
         );
         let possible_b = compute_possible_letters_at(
-            &state.domains[cell_b.slot_id].candidates,
-            state.domains[cell_b.slot_id].count,
+            state.domains[cell_b.slot_id].candidates(),
+            state.domains[cell_b.slot_id].count(),
             bucket_b,
             cell_b.pos_in_slot,
         );
@@ -508,7 +518,7 @@ mod tests {
         let result = initial_propagate(&mut state, &graph, &dict, &grid);
         assert!(result);
         // Only words starting with C should remain: CAR, CAT, COT
-        assert_eq!(state.domains[0].count, 3);
+        assert_eq!(state.domains[0].count(), 3);
     }
 
     #[test]
@@ -526,11 +536,10 @@ mod tests {
         // Restrict domain to just the one word
         let mut single = orca_core::bitset::BitSet::new(slot0_bucket.words.len());
         single.set(cat_id);
-        state.domains[0].candidates.and_with(&single);
-        state.domains[0].count = 1;
+        state.domains[0].intersect(&single);
         let result = propagate(&mut state, &graph, &dict, &grid, 0);
         assert!(result);
-        assert_eq!(state.domains[0].count, 1);
+        assert_eq!(state.domains[0].count(), 1);
     }
 
     #[test]
@@ -564,7 +573,7 @@ mod tests {
         // propagate_from_slots with slot 0 seeded
         let result = propagate_from_slots(&mut state, &graph, &dict, &grid, &[0]);
         assert!(result);
-        assert_eq!(state.domains[0].count, 1);
+        assert_eq!(state.domains[0].count(), 1);
     }
 
     #[test]
@@ -610,7 +619,7 @@ mod tests {
         let mut state = init_state(&grid, &dict);
         initial_propagate(&mut state, &graph, &dict, &grid);
 
-        let count_before: u32 = state.domains.iter().map(|d| d.count).sum();
+        let count_before: u32 = state.domains.iter().map(|d| d.count()).sum();
 
         let cell_a = CellSymInfo {
             slot_id: 0,
@@ -625,7 +634,7 @@ mod tests {
         let result = enforce_cell_symmetry(&mut state, &graph, &dict, &grid, &cell_a, &cell_b);
         assert!(result, "Symmetry enforcement should succeed");
 
-        let count_after: u32 = state.domains.iter().map(|d| d.count).sum();
+        let count_after: u32 = state.domains.iter().map(|d| d.count()).sum();
         assert!(
             count_after <= count_before,
             "Symmetry should not add candidates"
@@ -664,7 +673,7 @@ mod cached_mask_tests {
                 domain = bucket.all.clone();
                 letters.fill(ALL_LETTERS_MASK); // New propagation call after backtracking.
             }
-            assert!(domain.count_ones() > SMALL_DOMAIN_THRESHOLD);
+            assert!(domain.count_ones() > STANDALONE_ITERATION_THRESHOLD);
             for pos in 0..3 {
                 letters[pos] = witnesses[pos].letters(&domain, bucket, pos, letters[pos]);
             }
@@ -700,14 +709,19 @@ mod persistent_mask_tests {
         let d = &mut state.domains[0];
         let mut masks = d.letter_masks;
         for (pos, mask) in masks.iter().take(3).enumerate() {
-            let exact = compute_possible_letters_at(&d.candidates, d.count, bucket, pos);
+            assert_eq!(
+                d.iter_candidates().collect::<Vec<_>>(),
+                d.candidates().iter_ones().collect::<Vec<_>>()
+            );
+            assert_eq!(d.count(), d.candidates().count_ones());
+            let exact = compute_possible_letters_at(d.candidates(), d.count(), bucket, pos);
             assert_eq!(exact & !mask, 0, "cached mask must never exclude support");
         }
-        batch_compute_possible_letters(&d.candidates, bucket, 7, &mut masks);
+        batch_compute_possible_letters(d, bucket, 7, &mut masks);
         for (pos, mask) in masks.iter().take(3).enumerate() {
             assert_eq!(
                 *mask,
-                compute_possible_letters_at(&d.candidates, d.count, bucket, pos)
+                compute_possible_letters_at(d.candidates(), d.count(), bucket, pos)
             );
         }
         d.letter_masks = masks;
@@ -736,7 +750,7 @@ mod persistent_mask_tests {
         refresh(&mut state, b);
         state.pop_level();
         assert_eq!(state.domains[0].letter_masks, root_masks);
-        assert_eq!(state.domains[0].candidates, b.all);
+        assert_eq!(state.domains[0].candidates(), &b.all);
         refresh(&mut state, b);
         assert_eq!(clone.domains[0].letter_masks[1], 2);
     }
@@ -783,12 +797,12 @@ mod propagation_cache_tests {
             let (neighbor, pos, neighbor_pos) = graph.crossing_info(crossing_idx, side);
             let bucket = dict.bucket(grid.slots[source].len).unwrap();
             let domain = &state.domains[source];
-            let letters = domain.candidates.iter_ones().fold(0u32, |mask, word| {
+            let letters = domain.candidates().iter_ones().fold(0u32, |mask, word| {
                 mask | 1 << bucket.word_bytes[word * bucket.word_len() + pos]
             });
             assert_eq!(letters & !domain.letter_masks[pos], 0);
             let other = dict.bucket(grid.slots[neighbor].len).unwrap();
-            for word in state.domains[neighbor].candidates.iter_ones() {
+            for word in state.domains[neighbor].candidates().iter_ones() {
                 assert_ne!(
                     letters & (1 << other.word_bytes[word * other.word_len() + neighbor_pos]),
                     0
@@ -837,7 +851,7 @@ mod propagation_cache_tests {
                 &mut fresh, &graph, &dict, &grid, &slots
             ));
             for (a, b) in state.domains.iter().zip(&fresh.domains) {
-                assert_eq!(a.candidates, b.candidates);
+                assert_eq!(a.candidates(), b.candidates());
             }
             // Failure must not leave negative knowledge behind after backtracking.
             state.push_level();
@@ -848,7 +862,7 @@ mod propagation_cache_tests {
             assert_matches_words(&state, &graph, &dict, &grid);
             state.pop_level();
             for (a, b) in state.domains.iter().zip(&root) {
-                assert_eq!(a.candidates, b.candidates);
+                assert_eq!(a.candidates(), b.candidates());
                 assert_eq!(a.letter_masks, b.letter_masks);
             }
             assert!(propagate_from_slots(

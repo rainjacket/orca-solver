@@ -11,10 +11,7 @@ pub(crate) use orca_core::grid::MAX_SLOT_LEN;
 /// Domain for a single slot: the set of candidate word_ids that are still valid.
 #[derive(Debug, Clone)]
 pub struct SlotDomain {
-    /// Bitset of candidate word_ids for this slot's length bucket.
-    pub candidates: BitSet,
-    /// Cached count of candidates (avoids recomputing popcount).
-    pub count: u32,
+    values: orca_core::domain::CandidateSet,
     /// Conservative viable-letter bounds, restored with the candidate snapshot.
     /// Inline storage avoids an extra allocation per saved domain. Only crossing
     /// positions are read; 32 matches propagation's maximum supported slot length.
@@ -23,36 +20,38 @@ pub struct SlotDomain {
 
 impl SlotDomain {
     pub fn new(candidates: BitSet) -> Self {
-        let count = candidates.count_ones();
-        SlotDomain {
-            candidates,
-            count,
+        Self {
+            values: orca_core::domain::CandidateSet::new(candidates),
             letter_masks: [(1 << 26) - 1; MAX_SLOT_LEN],
         }
     }
-
-    /// Intersect candidates and maintain the cached count in the same pass.
+    pub fn candidates(&self) -> &BitSet {
+        self.values.bits()
+    }
+    pub fn count(&self) -> u32 {
+        self.values.count()
+    }
+    /// Enumerate only nonempty blocks, independent of the filtering threshold.
+    pub fn iter_candidates(&self) -> impl Iterator<Item = usize> + '_ {
+        self.values.iter()
+    }
     pub fn intersect(&mut self, other: &BitSet) {
-        self.intersect_blocks(other.blocks());
+        self.values.intersect(other.blocks());
     }
-
-    /// Shared hot-path primitive. Snapshotting and propagation bookkeeping are
-    /// the caller's responsibility. Returns the number of removed candidates.
-    #[inline]
-    pub(crate) fn intersect_blocks(&mut self, filter: &[u64]) -> u32 {
-        let blocks = self.candidates.blocks_mut();
-        debug_assert_eq!(blocks.len(), filter.len());
-        let mut removed = 0;
-        for (domain, &allowed) in blocks.iter_mut().zip(filter) {
-            removed += (*domain & !allowed).count_ones();
-            *domain &= allowed;
-        }
-        self.count -= removed;
-        removed
+    /// Snapshotting and propagation scheduling remain the caller's responsibility.
+    pub(crate) fn restrict_letters(
+        &mut self,
+        bucket: &orca_core::dict::LengthBucket,
+        pos: usize,
+        allowed: u32,
+    ) -> u32 {
+        bucket.intersect_letter_union(pos, allowed, &mut self.values)
     }
-
+    pub(crate) fn remove(&mut self, words: &BitSet) {
+        self.values.remove(words);
+    }
     pub fn is_empty(&self) -> bool {
-        self.count == 0
+        self.count() == 0
     }
 }
 
@@ -86,7 +85,7 @@ pub struct SolverState {
     pub(crate) prop_queue_bits: Vec<u64>,
     /// Last applied letter mask per directed arc (crossing_idx * 2 + side).
     /// Reset each propagation call: restored neighbors may need filtering again.
-    pub(crate) prop_letters_cache: Vec<u32>,
+    pub(crate) last_applied_letters: Vec<u32>,
     /// Positive witnesses are revalidated against the current domain, not trailed.
     pub(crate) prop_witnesses: Vec<crate::witnesses::Witnesses>,
 }
@@ -99,7 +98,7 @@ impl SolverState {
             trail_levels: Vec::new(),
             stats: SolverStats::new(),
             prop_queue_bits: Vec::new(),
-            prop_letters_cache: Vec::new(),
+            last_applied_letters: Vec::new(),
             prop_witnesses: Vec::new(),
         }
     }
@@ -138,6 +137,14 @@ impl SolverState {
 mod tests {
     use super::*;
     use crate::test_utils::test_dict;
+    fn trim(domain: &mut SlotDomain, count: usize) {
+        let mut filter = domain.candidates().clone();
+        let ids: Vec<_> = filter.iter_ones().skip(count).collect();
+        for i in ids {
+            filter.blocks_mut()[i / 64] &= !(1 << (i % 64));
+        }
+        domain.intersect(&filter);
+    }
     use orca_core::grid::Grid;
 
     #[test]
@@ -147,16 +154,16 @@ mod tests {
         let domains = init_domains(&grid, &dict);
         let mut state = SolverState::new(domains);
 
-        let original_count = state.domains[0].count;
+        let original_count = state.domains[0].count();
         assert!(original_count > 0);
 
         // Push level, modify domain, pop level — should restore
         state.push_level();
         state.save_domain(0);
-        state.domains[0].count = 1;
+        trim(&mut state.domains[0], 1);
         state.pop_level();
 
-        assert_eq!(state.domains[0].count, original_count);
+        assert_eq!(state.domains[0].count(), original_count);
     }
 
     #[test]
@@ -166,20 +173,20 @@ mod tests {
         let domains = init_domains(&grid, &dict);
         let mut state = SolverState::new(domains);
 
-        let original_count = state.domains[0].count;
+        let original_count = state.domains[0].count();
 
         state.push_level();
         state.save_domain(0);
         // Modify domain
-        state.domains[0].count = 5;
+        trim(&mut state.domains[0], 5);
         // Save again — should NOT overwrite the first save
         state.save_domain(0);
         // Modify again
-        state.domains[0].count = 1;
+        trim(&mut state.domains[0], 1);
 
         state.pop_level();
         // Should restore to original, not to 5
-        assert_eq!(state.domains[0].count, original_count);
+        assert_eq!(state.domains[0].count(), original_count);
     }
 
     #[test]
@@ -189,27 +196,27 @@ mod tests {
         let domains = init_domains(&grid, &dict);
         let mut state = SolverState::new(domains);
 
-        let count_0 = state.domains[0].count;
-        let count_1 = state.domains[1].count;
+        let count_0 = state.domains[0].count();
+        let count_1 = state.domains[1].count();
 
         // Level 1: modify slot 0
         state.push_level();
         state.save_domain(0);
-        state.domains[0].count = 5;
+        trim(&mut state.domains[0], 5);
 
         // Level 2: modify slot 1
         state.push_level();
         state.save_domain(1);
-        state.domains[1].count = 3;
+        trim(&mut state.domains[1], 3);
 
         // Pop level 2: slot 1 restored, slot 0 still modified
         state.pop_level();
-        assert_eq!(state.domains[0].count, 5);
-        assert_eq!(state.domains[1].count, count_1);
+        assert_eq!(state.domains[0].count(), 5);
+        assert_eq!(state.domains[1].count(), count_1);
 
         // Pop level 1: slot 0 restored
         state.pop_level();
-        assert_eq!(state.domains[0].count, count_0);
+        assert_eq!(state.domains[0].count(), count_0);
     }
 
     #[test]
@@ -223,11 +230,40 @@ mod tests {
         let filter = &bucket.letter_bits[0][2]; // words with C at position 0
 
         d1.intersect(filter);
-        let removed = d2.intersect_blocks(filter.blocks());
+        let removed = d2.restrict_letters(bucket, 0, 1 << 2);
         assert_eq!(removed, bucket.all.count_ones() - filter.count_ones());
-        assert_eq!(d2.intersect_blocks(filter.blocks()), 0);
+        assert_eq!(d2.restrict_letters(bucket, 0, 1 << 2), 0);
 
-        assert_eq!(d1.count, d2.count);
-        assert_eq!(d1.candidates.count_ones(), d2.candidates.count_ones());
+        assert_eq!(d1.count(), d2.count());
+        assert_eq!(d1.candidates().count_ones(), d2.candidates().count_ones());
+    }
+    #[test]
+    fn nested_sibling_wipeout_restores_candidate_iteration() {
+        let root = BitSet::new_all_set(4097);
+        let mut state = SolverState::new(vec![SlotDomain::new(root.clone())]);
+        for stride in [2, 64, 1000, 4098] {
+            state.push_level();
+            state.save_domain(0);
+            let mut filter = BitSet::new(4097);
+            for i in (0..4097).step_by(stride) {
+                filter.set(i);
+            }
+            state.domains[0].intersect(&filter);
+            let parent = state.domains[0].candidates().clone();
+            state.push_level();
+            state.save_domain(0);
+            state.domains[0].intersect(&BitSet::new(4097));
+            assert_eq!(state.clone().domains[0].iter_candidates().count(), 0);
+            state.pop_level();
+            assert_eq!(
+                state.domains[0].iter_candidates().collect::<Vec<_>>(),
+                parent.iter_ones().collect::<Vec<_>>()
+            );
+            state.save_domain(0);
+            state.pop_level();
+            assert_eq!(state.domains[0].candidates(), &root);
+            assert_eq!(state.domains[0].iter_candidates().count(), 4097);
+            assert_eq!(state.domains[0].count(), 4097);
+        }
     }
 }

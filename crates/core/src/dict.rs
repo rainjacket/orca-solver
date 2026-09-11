@@ -54,22 +54,6 @@ const fn union_layout() -> UnionLayout {
 }
 const UNION_LAYOUT: UnionLayout = union_layout();
 
-// Specialize by source count so the inner union has a fixed bound and can
-// be unrolled/vectorized without a dynamic source count inside every block.
-#[inline]
-fn intersect_sources<const N: usize>(domain: &mut [u64], sources: &[&[u64]; 6]) -> u32 {
-    let mut removed = 0;
-    for (i, word) in domain.iter_mut().enumerate() {
-        let mut filter = 0;
-        for source in sources.iter().take(N) {
-            filter |= source[i];
-        }
-        removed += (*word & !filter).count_ones();
-        *word &= filter;
-    }
-    removed
-}
-
 /// All words of a given length, with precomputed bitset indexes for fast filtering.
 #[derive(Debug, Clone)]
 pub struct LengthBucket {
@@ -115,23 +99,16 @@ impl LengthBucket {
     /// Select sources once, then combine and intersect each block without
     /// materializing a temporary filter. The caller preserves its snapshot.
     #[inline]
-    pub fn intersect_letter_union(&self, pos: usize, allowed: u32, domain: &mut [u64]) -> u32 {
-        debug_assert_eq!(domain.len(), self.all.blocks().len());
+    pub fn intersect_letter_union(
+        &self,
+        pos: usize,
+        allowed: u32,
+        domain: &mut crate::domain::CandidateSet,
+    ) -> u32 {
+        debug_assert_eq!(domain.bits().blocks().len(), self.all.blocks().len());
         let mut sources = [&[][..]; 6];
-        match self.letter_sources(pos, allowed, &mut sources) {
-            0 => {
-                let removed = domain.iter().map(|b| b.count_ones()).sum();
-                domain.fill(0);
-                removed
-            }
-            1 => intersect_sources::<1>(domain, &sources),
-            2 => intersect_sources::<2>(domain, &sources),
-            3 => intersect_sources::<3>(domain, &sources),
-            4 => intersect_sources::<4>(domain, &sources),
-            5 => intersect_sources::<5>(domain, &sources),
-            6 => intersect_sources::<6>(domain, &sources),
-            _ => unreachable!(),
-        }
+        let count = self.letter_sources(pos, allowed, &mut sources);
+        domain.intersect_union(&sources, count)
     }
 
     /// Select at most one precomputed subset per group. Zero and singleton
@@ -631,15 +608,17 @@ mod union_tests {
                 let mut actual = vec![u64::MAX; expected.len()];
                 bucket.letter_union(pos, mask, &mut actual);
                 assert_eq!(actual, expected, "position {pos}, mask {mask:#x}");
-                let mut domain = bucket.all.blocks().to_vec();
+                let mut bits = bucket.all.clone();
+                let domain = bits.blocks_mut();
                 for (i, block) in domain.iter_mut().enumerate() {
                     *block &= 0x5555555555555555u64.rotate_left(i as u32);
                 }
                 let before: u32 = domain.iter().map(|b| b.count_ones()).sum();
                 let reference: Vec<u64> =
                     domain.iter().zip(&expected).map(|(d, f)| d & f).collect();
+                let mut domain = crate::domain::CandidateSet::new(bits);
                 let removed = bucket.intersect_letter_union(pos, mask, &mut domain);
-                assert_eq!(domain, reference);
+                assert_eq!(domain.bits().blocks(), reference);
                 assert_eq!(
                     removed,
                     before - reference.iter().map(|b| b.count_ones()).sum::<u32>()
