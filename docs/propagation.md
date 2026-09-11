@@ -11,8 +11,8 @@ For each dequeued source slot, discover the viable letters at its crossing
 positions before restricting neighboring domains:
 
 - **At most 512 candidates:** iterate the remaining word IDs once, accumulating
-  letter masks for all crossing positions. `iter_ones` scans bitset blocks and
-  enumerates their set bits; it does not inspect every dictionary word. This path
+  letter masks for all crossing positions. The iterator visits indexed nonempty
+  64-bit blocks, then enumerates their set bits. This path
   refreshes the stored masks but does not populate witness IDs.
 - **More than 512 candidates:** check only letters in the intersection of the
   source position's stored mask and this call's directed-arc mask. For each
@@ -56,6 +56,32 @@ source bitsets read; it is fixed, with no runtime tuning or policy switch.
 Tests compare grouped filters with independent per-letter unions, including
 every subset of each group with and without Q, singleton and complement masks,
 random cross-group masks, partial tail blocks, and shared lazy initialization.
+
+## Domain storage and two independent choices
+
+`CandidateSet` owns a private bitset, cached count, and sorted nonempty-block
+index. Every mutation maintains all three; a snapshot restores them together.
+`SlotDomain` adds the snapshot-backed letter bounds. Propagation handles snapshot
+timing and scheduling, without choosing intersection kernels or updating indexes.
+
+| Operation | Choice |
+|---|---|
+| Discover crossing letters in source A | At most 512 words: iterate candidates through the nonempty-block index. Otherwise: witnesses and bitset support searches. |
+| Apply the filter to neighbor B | Below 25% nonempty blocks: indexed intersection. At or above 25%: dense intersection. |
+
+The 25% switch applies **only to filter application**. Small-domain iteration
+always skips empty blocks. Replacement-witness searches and exact heuristic
+counts retain their existing dense-bitset implementations. Both filtering paths
+fuse source unions, AND, and removed-bit counting. Dense filtering refreshes the
+index after a change; indexed filtering maintains it during traversal. Plain
+bitset intersection shares this kernel. Symmetry exclusion also updates metadata
+through the domain interface.
+
+Negative letter bounds are facts about a domain state and must be restored.
+Witnesses are hints checked before reuse and need not be trailed. The last-applied
+arc mask records work already done on a neighbor during one propagation call.
+These remain distinct because their lifetimes differ. Saved-level markers are
+not used; existing per-level snapshot deduplication is unchanged.
 
 ## Three kinds of cached information
 

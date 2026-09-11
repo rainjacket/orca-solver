@@ -40,8 +40,8 @@ fn partition_weight(state: &crate::state::SolverState, grid: &Grid) -> f64 {
     grid.slots
         .iter()
         .enumerate()
-        .filter(|(i, s)| s.constrained && !s.check_only && state.domains[*i].count > 1)
-        .map(|(i, _)| (state.domains[i].count as f64).log2())
+        .filter(|(i, s)| s.constrained && !s.check_only && state.domains[*i].count() > 1)
+        .map(|(i, _)| (state.domains[i].count() as f64).log2())
         .sum()
 }
 

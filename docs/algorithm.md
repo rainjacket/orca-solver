@@ -18,12 +18,13 @@ Orca processes slots in **priority queue order**, always propagating from the sl
 
 ### Key optimizations
 
-- **Bitset domains**: Each slot's candidate set is a bitset over word IDs, enabling fast AND-based filtering.
+- **Domain storage**: A private bitset, cached count, and nonempty-block index are maintained together. Snapshots restore all three.
 - **Precomputed letter_bits**: For each (slot_length, position, letter), a bitset marks which words have that letter at that position. Filtering a domain to "words with letter L at position P" is a single bitwise AND.
 - **Incremental counting**: Domain sizes are maintained incrementally (tracking removed bits) rather than recomputed from scratch.
-- **Small-domain discovery**: With at most 512 candidates, discover viable letters at all crossing positions in one pass through surviving words. Larger domains use persistent masks and supporting-word witnesses.
+- **Small-domain discovery**: With at most 512 candidates, discover viable letters at all crossing positions in one pass through surviving words, skipping empty 64-bit blocks. Larger domains use persistent masks and supporting-word witnesses.
 - **Persistent discovery caches**: Skip letters already ruled out; reuse a supporting word if it remains in the domain. Letter masks are restored with domain snapshots; witnesses are revalidated on every use. The separate last-applied-filter cache resets each propagation call.
 - **Grouped filter tables**: Once viable letters are known, combine at most six precomputed bitsets from the groups AEHIOU / BCGMP / DLNRST / FKVWY / JXZ / Q and fuse their union with the neighbor-domain intersection, avoiding a temporary filter.
+- **Hybrid intersection**: Apply filters through indexed nonempty blocks below 25% block occupancy, otherwise use a dense scan. This neighbor-domain choice is independent of the 512-candidate source-discovery cutoff.
 - **Exact heuristic counts**: SoCDP still counts supporting words per letter, using direct iteration through 2,000 candidates and bitset intersection counts above that. This is separate from propagation's existence tests.
 
 See [Propagation and backtracking](propagation.md) for cache lifetimes, snapshot rules, memory costs and implementation details.

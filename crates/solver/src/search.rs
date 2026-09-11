@@ -91,11 +91,11 @@ fn validate_fill<'a>(
             continue;
         }
         let domain = &state.domains[slot_idx];
-        if domain.count != 1 {
+        if domain.count() != 1 {
             continue;
         }
 
-        let word_id = domain.candidates.first_one().unwrap();
+        let word_id = domain.candidates().first_one().unwrap();
         let bucket = dict.bucket(slot.len)?;
         let word_text = &bucket.words[word_id];
         assignments[slot_idx] = Some(word_text.as_str());
@@ -158,7 +158,7 @@ fn all_slots_assigned(state: &SolverState, grid: &Grid) -> bool {
         .iter()
         .enumerate()
         .filter(|(_, s)| s.constrained && !s.check_only)
-        .all(|(i, _)| state.domains[i].count <= 1)
+        .all(|(i, _)| state.domains[i].count() <= 1)
 }
 
 /// Search state after initial propagation, ready for partitioning or solving.
@@ -321,8 +321,8 @@ fn find_best_crossing(
     let mut evaluated = 0usize;
 
     for crossing in &graph.crossings {
-        let count_a = state.domains[crossing.slot_a].count;
-        let count_b = state.domains[crossing.slot_b].count;
+        let count_a = state.domains[crossing.slot_a].count();
+        let count_b = state.domains[crossing.slot_b].count();
 
         if count_a <= 1 || count_b <= 1 {
             continue;
@@ -347,13 +347,13 @@ fn find_best_crossing(
         };
 
         let counts_a = compute_letter_counts_at(
-            &state.domains[crossing.slot_a].candidates,
+            state.domains[crossing.slot_a].candidates(),
             count_a,
             bucket_a,
             crossing.pos_in_a,
         );
         let counts_b = compute_letter_counts_at(
-            &state.domains[crossing.slot_b].candidates,
+            state.domains[crossing.slot_b].candidates(),
             count_b,
             bucket_b,
             crossing.pos_in_b,
@@ -456,12 +456,12 @@ fn select_branch_fallback(
         .slots
         .iter()
         .enumerate()
-        .filter(|(i, s)| s.constrained && !s.check_only && state.domains[*i].count > 1)
-        .min_by_key(|(i, _)| state.domains[*i].count)
+        .filter(|(i, s)| s.constrained && !s.check_only && state.domains[*i].count() > 1)
+        .min_by_key(|(i, _)| state.domains[*i].count())
         .map(|(i, _)| i)?;
 
     let bucket = dict.bucket(grid.slots[slot_id].len)?;
-    let count = state.domains[slot_id].count;
+    let count = state.domains[slot_id].count();
     let slot_len = grid.slots[slot_id].len;
 
     // Find a position where the domain disagrees (2+ viable letters).
@@ -469,7 +469,7 @@ fn select_branch_fallback(
     // words agree at position 0 but differ elsewhere.
     for pos in 0..slot_len {
         let viable_mask =
-            compute_possible_letters_at(&state.domains[slot_id].candidates, count, bucket, pos);
+            compute_possible_letters_at(state.domains[slot_id].candidates(), count, bucket, pos);
         if viable_mask.count_ones() >= 2 {
             let (row, col) = grid.slots[slot_id].cells[pos];
             return Some(BranchPoint {

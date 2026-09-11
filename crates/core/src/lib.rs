@@ -4,6 +4,7 @@
 
 pub mod bitset;
 pub mod dict;
+pub mod domain;
 pub mod grid;
 
 pub use bitset::BitSet;
