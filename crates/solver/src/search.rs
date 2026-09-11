@@ -675,7 +675,7 @@ where
 
                 // Restrict domain: keep only words with this letter at this position
                 let letter_bits = &bucket.letter_bits[frame.pos_in_slot][letter as usize];
-                state.domains[frame.slot_id].intersect_incremental(letter_bits);
+                state.domains[frame.slot_id].intersect(letter_bits);
 
                 if state.domains[frame.slot_id].is_empty() {
                     state.stats.backtracks += 1;

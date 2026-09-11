@@ -10,14 +10,49 @@ use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
 // Packed subset order matches the extraction in letter_union. Q reuses its index.
-const UNION_GROUPS: [&[usize]; 5] = [
+const UNION_GROUPS: [&[usize]; 6] = [
     &[0, 4, 7, 8, 14, 20],    // AEHIOU
     &[1, 2, 6, 12, 15],       // BCGMP
     &[3, 11, 13, 17, 18, 19], // DLNRST
     &[5, 10, 21, 22, 24],     // FKVWY
     &[9, 23, 25],             // JXZ
+    &[16],                    // Q (existing index)
 ];
-const UNION_ROWS: usize = 64 + 32 + 64 + 32 + 8;
+struct UnionLayout {
+    letter_group: [usize; 26],
+    group_masks: [u32; 6],
+    offsets: [usize; 6],
+    rows: usize,
+}
+
+// Derive lookup metadata at compile time; only subset packing in the hot loop
+// is specialized. Keep the group definition above as the source of truth.
+const fn union_layout() -> UnionLayout {
+    let mut layout = UnionLayout {
+        letter_group: [0; 26],
+        group_masks: [0; 6],
+        offsets: [0; 6],
+        rows: 0,
+    };
+    let mut group = 0;
+    while group < UNION_GROUPS.len() {
+        let letters = UNION_GROUPS[group];
+        layout.offsets[group] = layout.rows;
+        if letters.len() > 1 {
+            layout.rows += 1 << letters.len();
+        }
+        let mut bit = 0;
+        while bit < letters.len() {
+            let letter = letters[bit];
+            layout.letter_group[letter] = group;
+            layout.group_masks[group] |= 1 << letter;
+            bit += 1;
+        }
+        group += 1;
+    }
+    layout
+}
+const UNION_LAYOUT: UnionLayout = union_layout();
 
 /// All words of a given length, with precomputed bitset indexes for fast filtering.
 #[derive(Debug, Clone)]
@@ -47,11 +82,6 @@ impl LengthBucket {
     /// AEHIOU / BCGMP / DLNRST / FKVWY / JXZ / Q need at most six lookups.
     /// Copy the first bitset and OR the rest. Single letters use the existing index.
     pub fn letter_union(&self, pos: usize, allowed: u32, out: &mut [u64]) {
-        const LETTER_GROUP: [usize; 26] = [
-            0, 1, 1, 2, 0, 3, 1, 0, 0, 4, 3, 2, 1, 2, 0, 1, 5, 2, 2, 2, 0, 3, 3, 4, 3, 4,
-        ];
-        const GROUP_MASKS: [u32; 6] = [1065361, 36934, 927752, 23069728, 41943552, 65536];
-        const OFFSETS: [usize; 6] = [0, 64, 96, 160, 192, 200];
         debug_assert_eq!(allowed >> 26, 0);
         debug_assert_eq!(out.len(), self.all.blocks().len());
         if allowed == 0 {
@@ -64,14 +94,17 @@ impl LengthBucket {
         }
         let n = out.len();
         let table = self.unions[pos].get_or_init(|| {
-            let mut table = vec![0; UNION_ROWS * n];
+            let mut table = vec![0; UNION_LAYOUT.rows * n];
             for (group, letters) in UNION_GROUPS.iter().enumerate() {
+                if letters.len() == 1 {
+                    continue;
+                }
                 for subset in 1usize..(1 << letters.len()) {
                     let previous = subset & (subset - 1);
                     let letter = letters[subset.trailing_zeros() as usize];
                     let single = self.letter_bits[pos][letter].blocks();
-                    let dst = (OFFSETS[group] + subset) * n;
-                    let src = (OFFSETS[group] + previous) * n;
+                    let dst = (UNION_LAYOUT.offsets[group] + subset) * n;
+                    let src = (UNION_LAYOUT.offsets[group] + previous) * n;
                     for b in 0..n {
                         table[dst + b] = table[src + b] | single[b];
                     }
@@ -82,7 +115,7 @@ impl LengthBucket {
         let mut remaining = allowed;
         let mut first = true;
         while remaining != 0 {
-            let group = LETTER_GROUP[remaining.trailing_zeros() as usize];
+            let group = UNION_LAYOUT.letter_group[remaining.trailing_zeros() as usize];
             let subset = match group {
                 0 => {
                     ((remaining & 1)
@@ -117,11 +150,11 @@ impl LengthBucket {
                 5 => ((remaining >> 16) & 1) as usize,
                 _ => unreachable!(),
             };
-            remaining &= !GROUP_MASKS[group];
+            remaining &= !UNION_LAYOUT.group_masks[group];
             let source = match group {
-                5 => self.letter_bits[pos][16].blocks(),
+                5 => self.letter_bits[pos][UNION_GROUPS[5][0]].blocks(),
                 _ => {
-                    let start = OFFSETS[group] * n + subset * n;
+                    let start = UNION_LAYOUT.offsets[group] * n + subset * n;
                     &table[start..start + n]
                 }
             };
