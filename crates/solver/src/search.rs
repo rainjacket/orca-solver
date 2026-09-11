@@ -111,9 +111,11 @@ fn validate_fill<'a>(
         // itself — the constraint is between distinct entries.
         if disallow_shared_substring > 0 {
             let mut word_subs = std::collections::HashSet::new();
-            for len in disallow_shared_substring..=word_text.len() {
-                for start in 0..=word_text.len() - len {
-                    word_subs.insert(&word_text[start..start + len]);
+            // A shared substring longer than k necessarily contains a shared
+            // k-letter window. Checking longer lengths adds no information.
+            if word_text.len() >= disallow_shared_substring {
+                for start in 0..=word_text.len() - disallow_shared_substring {
+                    word_subs.insert(&word_text[start..start + disallow_shared_substring]);
                 }
             }
             for sub in word_subs {
@@ -1130,5 +1132,25 @@ mod tests {
         assert!(with_rule.solutions.is_empty());
         let without_rule = super::solve_grid(&grid, &dict, &SearchConfig::default(), 0, None);
         assert_eq!(without_rule.solutions.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod substring_window_tests {
+    use super::*;
+
+    #[test]
+    fn minimum_window_matches_shared_substring_boundary() {
+        let dict = Dictionary::parse("ABCDEFG;1\nBCDEFGH;1\n").unwrap();
+        let grid = Grid::parse("2 7\n.......\n.......\n").unwrap();
+        for minimum in 0..=9 {
+            let result = solve_grid(&grid, &dict, &SearchConfig::default(), minimum, None);
+            assert!(result.exhausted);
+            assert_eq!(
+                result.solutions.len(),
+                if (1..=6).contains(&minimum) { 0 } else { 2 },
+                "minimum {minimum}"
+            );
+        }
     }
 }

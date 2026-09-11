@@ -6,8 +6,7 @@ use orca_core::grid::Grid;
 
 use crate::stats::SolverStats;
 
-/// Maximum slot length supported by propagation letter masks.
-pub(crate) const MAX_SLOT_LEN: usize = 32;
+pub(crate) use orca_core::grid::MAX_SLOT_LEN;
 
 /// Domain for a single slot: the set of candidate word_ids that are still valid.
 #[derive(Debug, Clone)]

@@ -81,6 +81,10 @@ pub struct Slot {
     pub pattern: Vec<Option<u32>>,
 }
 
+/// Maximum entry length supported by the solver's position masks.
+/// Grid dimensions may be larger as long as individual entries fit this limit.
+pub const MAX_SLOT_LEN: usize = 32;
+
 /// A crossing between two slots at shared cells.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Crossing {
@@ -326,6 +330,17 @@ impl Grid {
             |c, r| (r, c),
             &mut slots,
         );
+
+        if let Some(slot) = slots.iter().find(|slot| slot.len > MAX_SLOT_LEN) {
+            bail!(
+                "{} entry at ({}, {}) has length {}; maximum supported entry length is {}",
+                slot.direction,
+                slot.start.0,
+                slot.start.1,
+                slot.len,
+                MAX_SLOT_LEN
+            );
+        }
 
         // Compute crossings: for each cell shared by two slots, record crossing.
         // Skip crossings at WILD cells (unconstrained).
@@ -843,5 +858,22 @@ mod tests {
         // A fully open slot is enumerated normally.
         let grid = Grid::parse("1 3\n...\n").unwrap();
         assert!(grid.slots[0].constrained && !grid.slots[0].check_only);
+    }
+}
+
+#[cfg(test)]
+mod slot_length_tests {
+    use super::*;
+
+    #[test]
+    fn entry_length_boundary_and_large_blocked_grids() {
+        assert!(Grid::parse(&format!("1 32\n{}\n", ".".repeat(32))).is_ok());
+        let error =
+            Grid::parse(&format!("3 33\n{}", (".".repeat(33) + "\n").repeat(3))).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("maximum supported entry length is 32"));
+        assert!(Grid::parse(&format!("1 33\n*{}\n", ".".repeat(32))).is_err());
+        assert!(Grid::parse(&format!("1 65\n{}#{}\n", ".".repeat(32), ".".repeat(32))).is_ok());
     }
 }

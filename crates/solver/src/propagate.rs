@@ -194,7 +194,7 @@ fn propagate_inner(
             letters_cache[cache_idx] = possible_letters;
 
             // Build filter in scratch buffer.
-            // Five-letter subset tables replace up to 26 letter-index passes with at most six.
+            // Letter-group subset tables replace up to 26 letter-index passes with at most six.
             let num_blocks = state.domains[neighbor_id].candidates.blocks().len();
             if filter_scratch.len() < num_blocks {
                 filter_scratch.resize(num_blocks, 0);

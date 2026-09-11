@@ -64,6 +64,8 @@ WORD;SCORE
 
 ## Grid format
 
+Individual entries may contain at most 32 cells. Grid dimensions can be larger when black squares keep entries within that limit.
+
 Grid files can use `.grid` or `.txt` extensions. The first non-comment line is `rows cols`, followed by the grid:
 
 ```
