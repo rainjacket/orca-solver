@@ -2324,13 +2324,6 @@ var animData = { anim15: renderAnimGrid('anim15',
     <b>Precomputed letter combinations.</b> Once the viable crossing letters are known, Orca builds a filter by ORing their letter-at-position bitsets. To speed this up, it groups the alphabet into ABCDE, FGHIJ, etc., and precomputes the OR for each group's 32 possible subsets. The filter can then be assembled from at most six bitsets instead of up to 26.
 </li>
 
-<li>
-    <strong>Subset before intersection.</strong>
-    Even after building the filter, a read-only subset check determines whether
-    the intersection would actually shrink the domain. If not, skip &mdash;
-    avoiding the cost of writing back updated blocks and recounting the domain
-    size.
-</li>
 </ul>
 
 <p>

@@ -52,7 +52,7 @@ The static crossing sort can be biased per cell. If grid cells are tagged with s
 
 ## Iterative search
 
-The search uses an explicit stack rather than recursion, avoiding stack overflow on deep search trees. Forced single-letter moves are applied inline, sharing the enclosing decision's trail. Before the first candidate change to a slot at a decision level, its domain and letter masks are saved together; later changes at that level reuse that snapshot. Backtracking restores the saved domains.
+The search uses an explicit stack rather than recursion, avoiding stack overflow on deep search trees. Forced single-letter moves are applied inline, sharing the enclosing decision's trail. Before the first candidate update attempt for a slot at a decision level, its domain and letter masks are saved together; later updates at that level reuse that snapshot. An intersection that removes nothing can therefore save a domain too. Backtracking restores the saved domains.
 
 ## Duplicate and substring constraints
 
