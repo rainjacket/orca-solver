@@ -59,7 +59,6 @@ pub fn propagate_from_slots(
     // then put them back at the end. The buffers grow once and are reused.
     let mut in_queue = std::mem::take(&mut state.prop_queue_bits);
     let mut letters_cache = std::mem::take(&mut state.prop_letters_cache);
-    let mut filter_scratch = std::mem::take(&mut state.prop_filter);
 
     in_queue.resize(num_queue_blocks, 0);
     in_queue[..num_queue_blocks].fill(0);
@@ -69,19 +68,10 @@ pub fn propagate_from_slots(
     letters_cache.resize(cache_size, ALL_LETTERS_MASK);
     letters_cache[..cache_size].fill(ALL_LETTERS_MASK);
 
-    let result = propagate_inner(
-        state,
-        graph,
-        dict,
-        grid,
-        &mut in_queue,
-        &mut letters_cache,
-        &mut filter_scratch,
-    );
+    let result = propagate_inner(state, graph, dict, grid, &mut in_queue, &mut letters_cache);
 
     state.prop_queue_bits = in_queue;
     state.prop_letters_cache = letters_cache;
-    state.prop_filter = filter_scratch;
 
     result
 }
@@ -95,7 +85,6 @@ fn propagate_inner(
     grid: &Grid,
     in_queue: &mut [u64],
     letters_cache: &mut [u32],
-    filter_scratch: &mut Vec<u64>,
 ) -> bool {
     loop {
         // Pop the slot with the smallest domain from the queue.
@@ -193,20 +182,15 @@ fn propagate_inner(
             }
             letters_cache[cache_idx] = possible_letters;
 
-            // Build filter in scratch buffer.
-            // Letter-group subset tables replace up to 26 letter-index passes with at most six.
-            let num_blocks = state.domains[neighbor_id].candidates.blocks().len();
-            if filter_scratch.len() < num_blocks {
-                filter_scratch.resize(num_blocks, 0);
-            }
-            let filter = &mut filter_scratch[..num_blocks];
-            neighbor_bucket.letter_union(pos_in_neighbor, possible_letters, filter);
-
-            // Preserve the original domain before writing; save_domain deduplicates
-            // saves at this decision level, including unchanged intersections.
+            // Snapshot before the fused union/intersection writes the domain.
             state.save_domain(neighbor_id);
-
-            let count_removed = state.domains[neighbor_id].intersect_blocks(filter);
+            let domain = &mut state.domains[neighbor_id];
+            let count_removed = neighbor_bucket.intersect_letter_union(
+                pos_in_neighbor,
+                possible_letters,
+                domain.candidates.blocks_mut(),
+            );
+            domain.count -= count_removed;
             if count_removed == 0 {
                 continue;
             }

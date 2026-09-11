@@ -26,8 +26,8 @@ The separate standalone letter-discovery and exact SoCDP letter-count functions
 still use a **2,000-candidate cutoff**. Witnesses establish existence, not counts;
 they do not replace the exact counts needed by the branching heuristic.
 
-For the neighbor, build the OR of the viable-letter indexes using the existing
-[letter-group subset tables](#letter-group-filter-tables), then AND with its domain.
+For the neighbor, select the precomputed sources from the
+[letter-group subset tables](#letter-group-filter-tables). Fuse their OR with the domain intersection.
 Skip all-26-letter filters and unchanged filters within the same propagation
 call. Otherwise save the domain, apply the intersection and count removed bits
 in one pass. If none were removed, skip the statistics update and enqueueing.
@@ -37,8 +37,10 @@ There is no separate subset precheck. Filter construction has no 512 cutoff.
 
 Filter construction uses the fixed groups **AEHIOU / BCGMP / DLNRST / FKVWY /
 JXZ / Q**. Each touched group contributes one precomputed bitset; Q reuses its
-existing letter index. Copy the first bitset and OR the rest, using at most six
-source bitsets and five OR passes. Zero and singleton masks bypass the tables.
+existing letter index. Select these sources once, then OR their words and
+intersect each domain word immediately, counting removed candidates in the
+same pass. This avoids writing and rereading a temporary filter. Kernels are
+specialized for one through six sources. Zero and singleton masks bypass the tables.
 
 The five non-singleton groups have 6, 5, 6, 5 and 3 letters, requiring
 64 + 32 + 64 + 32 + 8 = **200 subset rows**, including empty subsets.

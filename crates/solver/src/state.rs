@@ -89,8 +89,6 @@ pub struct SolverState {
     pub(crate) prop_letters_cache: Vec<u32>,
     /// Positive witnesses are revalidated against the current domain, not trailed.
     pub(crate) prop_witnesses: Vec<crate::witnesses::Witnesses>,
-    /// Scratch buffer for filter construction.
-    pub(crate) prop_filter: Vec<u64>,
 }
 
 impl SolverState {
@@ -103,7 +101,6 @@ impl SolverState {
             prop_queue_bits: Vec::new(),
             prop_letters_cache: Vec::new(),
             prop_witnesses: Vec::new(),
-            prop_filter: Vec::new(),
         }
     }
 
