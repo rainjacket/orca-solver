@@ -4,7 +4,10 @@ September 10, 2026. Apple M5, Rust 1.93.1, release profile (thin LTO,
 codegen-units=1), `RUSTFLAGS='-C target-cpu=native'`. Ordinary CLI builds,
 without experimental features, tracing, policy dispatch, or search-budget hooks.
 
-## Implementation
+> Historical validation of the original alphabetic layout. Current production uses
+> [optimized letter groups](letter-group-filters.md).
+
+## Original implementation
 
 At each word position, precompute unions for the 32 subsets of each group
 ABCDE / FGHIJ / KLMNO / PQRST / UVWXY. Z uses its existing letter index.
@@ -19,8 +22,7 @@ cloned buckets and concurrent searches. Payload per initialized position is
 This measurement predates persistent discovery caches: at the time, both
 discovery and exact counting used 2,000-candidate cutoffs. The current
 [propagation implementation](propagation.md) uses masks, witnesses and a 512
-discovery cutoff; exact counts remain at 2,000. The filter tables themselves
-are unchanged. No complement/density policy or runtime configuration is added.
+discovery cutoff; exact counts remain at 2,000. The filter layout has since changed; see the current document linked above. No complement/density policy or runtime configuration is added.
 
 ## Measurements
 

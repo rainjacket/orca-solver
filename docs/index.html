@@ -2321,7 +2321,7 @@ var animData = { anim15: renderAnimGrid('anim15',
 </li>
 
 <li>
-    <b>Precomputed letter combinations.</b> Once the viable crossing letters are known, Orca builds a filter by ORing their letter-at-position bitsets. To speed this up, it groups the alphabet into ABCDE, FGHIJ, etc., and precomputes the OR for each group's 32 possible subsets. The filter can then be assembled from at most six bitsets instead of up to 26.
+    <b>Precomputed letter combinations.</b> Once the viable crossing letters are known, Orca builds a filter by ORing their letter-at-position bitsets. To speed this up, it groups the alphabet into <code>AEHIOU / BCGMP / DLNRST / FKVWY / JXZ / Q</code>, and precomputes the OR for each group's possible subsets. The filter can then be assembled from at most six bitsets instead of up to 26.
 </li>
 
 </ul>

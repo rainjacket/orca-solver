@@ -27,7 +27,7 @@ still use a **2,000-candidate cutoff**. Witnesses establish existence, not count
 they do not replace the exact counts needed by the branching heuristic.
 
 For the neighbor, build the OR of the viable-letter indexes using the existing
-[five-letter subset tables](five-letter-filters.md), then AND with its domain.
+[letter-group subset tables](letter-group-filters.md), then AND with its domain.
 Skip all-26-letter filters and unchanged filters within the same propagation
 call. Otherwise save the domain, apply the intersection and count removed bits
 in one pass. If none were removed, skip the statistics update and enqueueing.
