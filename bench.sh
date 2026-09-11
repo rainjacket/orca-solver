@@ -20,6 +20,7 @@ set -euo pipefail
 
 source "$HOME/.cargo/env" 2>/dev/null || true
 
+BUILD_DEFAULT_ORCA="${ORCA+x}"
 ORCA="${ORCA:-./target/release/orca}"
 DICT="${DICT:-dictionaries/spreadthewordlist_caps.dict}"
 PARALLEL=""
@@ -50,8 +51,8 @@ if [ ! -f "$DICT" ]; then
     exit 1
 fi
 
-if [ ! -f "$ORCA" ]; then
-    echo "Building release binary..."
+if [ -z "$BUILD_DEFAULT_ORCA" ]; then
+    echo "Building current release binary..."
     RUSTFLAGS="-C target-cpu=native" cargo build --release
 fi
 
@@ -68,11 +69,12 @@ trap 'rm -f "$COMBINED"' EXIT
 run_bench() {
     local title="$1" grid="$2" supplement="$3"
     shift 3
-    cat "$DICT" "$supplement" > "$COMBINED"
+    { cat "$DICT"; printf '\n'; cat "$supplement"; } > "$COMBINED"
     echo "=== $title ==="
     echo "(dict: $DICT + $(basename "$supplement"))"
+    shasum -a 256 "$grid" "$COMBINED"
     # shellcheck disable=SC2086
-    time "$ORCA" fill "$grid" "$COMBINED" "$@" -n 0 --progress-interval 100000 \
+    time "$ORCA" fill "$grid" "$COMBINED" "$@" -n 0 --no-browser --progress-interval 100000 \
         $PARALLEL_ARGS 2>&1 \
         | grep -E '(^Final stats:|^Search exhausted|^Stopped after|\[partition\]|\[parallel\])'
     echo
@@ -80,6 +82,7 @@ run_bench() {
 
 echo "Mode: $MODE"
 echo "Binary: $ORCA"
+shasum -a 256 "$ORCA" "$DICT"
 echo
 
 run_bench "15x15 (bench_15x15)" \

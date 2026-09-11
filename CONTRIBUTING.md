@@ -10,6 +10,7 @@ cargo build --release
 
 ```bash
 cargo test --all
+node --test cli/tests/browser.test.js
 ```
 
 All tests use a small built-in dictionary and don't require external files.

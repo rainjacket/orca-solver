@@ -141,3 +141,5 @@ The script builds a release binary and runs an exhaustive search on both grids (
 ## License
 
 MIT
+
+The generated solution browser displays 100 groups per page. Review marks are saved locally; use **Export marks** to back them up or **Import marks** to merge a saved review. If browser storage is unavailable, marks remain usable for the current session and can still be exported.

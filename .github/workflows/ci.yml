@@ -19,5 +19,11 @@ jobs:
       - run: cargo fmt --all -- --check
         if: matrix.os == 'ubuntu-latest'
       - run: cargo clippy --all-targets -- -D warnings
+      - uses: actions/setup-node@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          node-version: 22
+      - run: node --test cli/tests/browser.test.js
+        if: matrix.os == 'ubuntu-latest'
       - run: cargo test --all
       - run: cargo build --release
