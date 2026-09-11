@@ -9,10 +9,20 @@ use std::fs;
 use std::path::Path;
 use std::sync::{Arc, OnceLock};
 
+// Packed subset order matches the extraction in letter_union. Q reuses its index.
+const UNION_GROUPS: [&[usize]; 5] = [
+    &[0, 4, 7, 8, 14, 20],    // AEHIOU
+    &[1, 2, 6, 12, 15],       // BCGMP
+    &[3, 11, 13, 17, 18, 19], // DLNRST
+    &[5, 10, 21, 22, 24],     // FKVWY
+    &[9, 23, 25],             // JXZ
+];
+const UNION_ROWS: usize = 64 + 32 + 64 + 32 + 8;
+
 /// All words of a given length, with precomputed bitset indexes for fast filtering.
 #[derive(Debug, Clone)]
 pub struct LengthBucket {
-    /// Immutable five-letter union tables, allocated only at positions used by filtering.
+    /// Immutable letter-group union tables, allocated only at positions used by filtering.
     /// Clones and concurrent searches share each position's one-time initialization.
     unions: Arc<[OnceLock<Box<[u64]>>]>,
     /// All words of this length, indexed by word_id.
@@ -34,9 +44,14 @@ impl LengthBucket {
     }
 
     /// Materialize the words whose letter at `pos` belongs to the 26-bit `allowed` mask.
-    /// ABCDE, FGHIJ, KLMNO, PQRST and UVWXY each need one lookup, followed
-    /// by at most four OR passes (plus Z). Single letters use the existing index.
+    /// AEHIOU / BCGMP / DLNRST / FKVWY / JXZ / Q need at most six lookups.
+    /// Copy the first bitset and OR the rest. Single letters use the existing index.
     pub fn letter_union(&self, pos: usize, allowed: u32, out: &mut [u64]) {
+        const LETTER_GROUP: [usize; 26] = [
+            0, 1, 1, 2, 0, 3, 1, 0, 0, 4, 3, 2, 1, 2, 0, 1, 5, 2, 2, 2, 0, 3, 3, 4, 3, 4,
+        ];
+        const GROUP_MASKS: [u32; 6] = [1065361, 36934, 927752, 23069728, 41943552, 65536];
+        const OFFSETS: [usize; 6] = [0, 64, 96, 160, 192, 200];
         debug_assert_eq!(allowed >> 26, 0);
         debug_assert_eq!(out.len(), self.all.blocks().len());
         if allowed == 0 {
@@ -49,15 +64,16 @@ impl LengthBucket {
         }
         let n = out.len();
         let table = self.unions[pos].get_or_init(|| {
-            let mut table = vec![0; 5 * 32 * n];
-            for group in 0..5 {
-                for subset in 1usize..32 {
+            let mut table = vec![0; UNION_ROWS * n];
+            for (group, letters) in UNION_GROUPS.iter().enumerate() {
+                for subset in 1usize..(1 << letters.len()) {
                     let previous = subset & (subset - 1);
-                    let letter = group * 5 + subset.trailing_zeros() as usize;
+                    let letter = letters[subset.trailing_zeros() as usize];
                     let single = self.letter_bits[pos][letter].blocks();
+                    let dst = (OFFSETS[group] + subset) * n;
+                    let src = (OFFSETS[group] + previous) * n;
                     for b in 0..n {
-                        table[(group * 32 + subset) * n + b] =
-                            table[(group * 32 + previous) * n + b] | single[b];
+                        table[dst + b] = table[src + b] | single[b];
                     }
                 }
             }
@@ -66,15 +82,48 @@ impl LengthBucket {
         let mut remaining = allowed;
         let mut first = true;
         while remaining != 0 {
-            let group = remaining.trailing_zeros() as usize / 5;
-            let shift = group * 5;
-            let subset = (remaining >> shift) as usize & 31;
-            remaining &= !(31 << shift);
-            let source = if group == 5 {
-                self.letter_bits[pos][25].blocks()
-            } else {
-                let start = (group * 32 + subset) * n;
-                &table[start..start + n]
+            let group = LETTER_GROUP[remaining.trailing_zeros() as usize];
+            let subset = match group {
+                0 => {
+                    ((remaining & 1)
+                        | (((remaining >> 4) & 1) << 1)
+                        | (((remaining >> 7) & 3) << 2)
+                        | (((remaining >> 14) & 1) << 4)
+                        | (((remaining >> 20) & 1) << 5)) as usize
+                }
+                1 => {
+                    (((remaining >> 1) & 3)
+                        | (((remaining >> 6) & 1) << 2)
+                        | (((remaining >> 12) & 1) << 3)
+                        | (((remaining >> 15) & 1) << 4)) as usize
+                }
+                2 => {
+                    (((remaining >> 3) & 1)
+                        | (((remaining >> 11) & 1) << 1)
+                        | (((remaining >> 13) & 1) << 2)
+                        | (((remaining >> 17) & 7) << 3)) as usize
+                }
+                3 => {
+                    (((remaining >> 5) & 1)
+                        | (((remaining >> 10) & 1) << 1)
+                        | (((remaining >> 21) & 3) << 2)
+                        | (((remaining >> 24) & 1) << 4)) as usize
+                }
+                4 => {
+                    (((remaining >> 9) & 1)
+                        | (((remaining >> 23) & 1) << 1)
+                        | (((remaining >> 25) & 1) << 2)) as usize
+                }
+                5 => ((remaining >> 16) & 1) as usize,
+                _ => unreachable!(),
+            };
+            remaining &= !GROUP_MASKS[group];
+            let source = match group {
+                5 => self.letter_bits[pos][16].blocks(),
+                _ => {
+                    let start = OFFSETS[group] * n + subset * n;
+                    &table[start..start + n]
+                }
             };
             if first {
                 out.copy_from_slice(source);
@@ -465,10 +514,13 @@ mod union_tests {
         for letter in 0..26 {
             masks.extend([1 << letter, all ^ (1 << letter)]);
         }
-        // Every subset in every full group, including combinations with Z.
-        for group in 0..5 {
-            for subset in 0..32 {
-                masks.extend([subset << (5 * group), (subset << (5 * group)) | (1 << 25)]);
+        // Exhaust every packed group, alone and combined with the singleton Q.
+        for letters in UNION_GROUPS {
+            for subset in 0..(1usize << letters.len()) {
+                let mask = letters.iter().enumerate().fold(0, |mask, (bit, letter)| {
+                    mask | (((subset >> bit) & 1) as u32) << letter
+                });
+                masks.extend([mask, mask | (1 << 16)]);
             }
         }
         let mut random = 42u32;

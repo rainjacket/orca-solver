@@ -23,7 +23,7 @@ Orca processes slots in **priority queue order**, always propagating from the sl
 - **Incremental counting**: Domain sizes are maintained incrementally (tracking removed bits) rather than recomputed from scratch.
 - **Small-domain discovery**: With at most 512 candidates, discover viable letters at all crossing positions in one pass through surviving words. Larger domains use persistent masks and supporting-word witnesses.
 - **Persistent discovery caches**: Skip letters already ruled out; reuse a supporting word if it remains in the domain. Letter masks are restored with domain snapshots; witnesses are revalidated on every use. The separate last-applied-filter cache resets each propagation call.
-- **Grouped filter tables**: Once viable letters are known, combine at most six precomputed bitsets from five-letter alphabet groups to build the neighbor filter.
+- **Grouped filter tables**: Once viable letters are known, combine at most six precomputed bitsets from the groups AEHIOU / BCGMP / DLNRST / FKVWY / JXZ / Q to build the neighbor filter.
 - **Exact heuristic counts**: SoCDP still counts supporting words per letter, using direct iteration through 2,000 candidates and bitset intersection counts above that. This is separate from propagation's existence tests.
 
 See [Propagation and backtracking](propagation.md) for cache lifetimes, snapshot rules, memory costs and implementation details.
