@@ -54,6 +54,22 @@ const fn union_layout() -> UnionLayout {
 }
 const UNION_LAYOUT: UnionLayout = union_layout();
 
+// Specialize by source count so the inner union has a fixed bound and can
+// be unrolled/vectorized without a dynamic source count inside every block.
+#[inline]
+fn intersect_sources<const N: usize>(domain: &mut [u64], sources: &[&[u64]; 6]) -> u32 {
+    let mut removed = 0;
+    for (i, word) in domain.iter_mut().enumerate() {
+        let mut filter = 0;
+        for source in sources.iter().take(N) {
+            filter |= source[i];
+        }
+        removed += (*word & !filter).count_ones();
+        *word &= filter;
+    }
+    removed
+}
+
 /// All words of a given length, with precomputed bitset indexes for fast filtering.
 #[derive(Debug, Clone)]
 pub struct LengthBucket {
@@ -78,21 +94,64 @@ impl LengthBucket {
         self.letter_bits.len()
     }
 
-    /// Materialize the words whose letter at `pos` belongs to the 26-bit `allowed` mask.
-    /// AEHIOU / BCGMP / DLNRST / FKVWY / JXZ / Q need at most six lookups.
-    /// Copy the first bitset and OR the rest. Single letters use the existing index.
+    /// Materialize the words whose letter at `pos` belongs to `allowed`.
     pub fn letter_union(&self, pos: usize, allowed: u32, out: &mut [u64]) {
-        debug_assert_eq!(allowed >> 26, 0);
         debug_assert_eq!(out.len(), self.all.blocks().len());
-        if allowed == 0 {
+        let mut sources = [&[][..]; 6];
+        let count = self.letter_sources(pos, allowed, &mut sources);
+        if count == 0 {
             out.fill(0);
             return;
         }
-        if allowed.is_power_of_two() {
-            out.copy_from_slice(self.letter_bits[pos][allowed.trailing_zeros() as usize].blocks());
-            return;
+        out.copy_from_slice(sources[0]);
+        for source in &sources[1..count] {
+            for (dst, src) in out.iter_mut().zip(*source) {
+                *dst |= src;
+            }
         }
-        let n = out.len();
+    }
+
+    /// Intersect a domain with the allowed-letter union and count removals.
+    /// Select sources once, then combine and intersect each block without
+    /// materializing a temporary filter. The caller preserves its snapshot.
+    #[inline]
+    pub fn intersect_letter_union(&self, pos: usize, allowed: u32, domain: &mut [u64]) -> u32 {
+        debug_assert_eq!(domain.len(), self.all.blocks().len());
+        let mut sources = [&[][..]; 6];
+        match self.letter_sources(pos, allowed, &mut sources) {
+            0 => {
+                let removed = domain.iter().map(|b| b.count_ones()).sum();
+                domain.fill(0);
+                removed
+            }
+            1 => intersect_sources::<1>(domain, &sources),
+            2 => intersect_sources::<2>(domain, &sources),
+            3 => intersect_sources::<3>(domain, &sources),
+            4 => intersect_sources::<4>(domain, &sources),
+            5 => intersect_sources::<5>(domain, &sources),
+            6 => intersect_sources::<6>(domain, &sources),
+            _ => unreachable!(),
+        }
+    }
+
+    /// Select at most one precomputed subset per group. Zero and singleton
+    /// masks bypass lazy table initialization; Q uses its existing index.
+    #[inline]
+    fn letter_sources<'a>(
+        &'a self,
+        pos: usize,
+        allowed: u32,
+        sources: &mut [&'a [u64]; 6],
+    ) -> usize {
+        debug_assert_eq!(allowed >> 26, 0);
+        if allowed == 0 {
+            return 0;
+        }
+        if allowed.is_power_of_two() {
+            sources[0] = self.letter_bits[pos][allowed.trailing_zeros() as usize].blocks();
+            return 1;
+        }
+        let n = self.all.blocks().len();
         let table = self.unions[pos].get_or_init(|| {
             let mut table = vec![0; UNION_LAYOUT.rows * n];
             for (group, letters) in UNION_GROUPS.iter().enumerate() {
@@ -113,7 +172,7 @@ impl LengthBucket {
             table.into_boxed_slice()
         });
         let mut remaining = allowed;
-        let mut first = true;
+        let mut count = 0;
         while remaining != 0 {
             let group = UNION_LAYOUT.letter_group[remaining.trailing_zeros() as usize];
             let subset = match group {
@@ -158,15 +217,10 @@ impl LengthBucket {
                     &table[start..start + n]
                 }
             };
-            if first {
-                out.copy_from_slice(source);
-                first = false;
-            } else {
-                for (dst, src) in out.iter_mut().zip(source) {
-                    *dst |= src;
-                }
-            }
+            sources[count] = source;
+            count += 1;
         }
+        count
     }
 
     /// Get the set of candidate word_ids matching a partial pattern.
@@ -577,6 +631,20 @@ mod union_tests {
                 let mut actual = vec![u64::MAX; expected.len()];
                 bucket.letter_union(pos, mask, &mut actual);
                 assert_eq!(actual, expected, "position {pos}, mask {mask:#x}");
+                let mut domain = bucket.all.blocks().to_vec();
+                for (i, block) in domain.iter_mut().enumerate() {
+                    *block &= 0x5555555555555555u64.rotate_left(i as u32);
+                }
+                let before: u32 = domain.iter().map(|b| b.count_ones()).sum();
+                let reference: Vec<u64> =
+                    domain.iter().zip(&expected).map(|(d, f)| d & f).collect();
+                let removed = bucket.intersect_letter_union(pos, mask, &mut domain);
+                assert_eq!(domain, reference);
+                assert_eq!(
+                    removed,
+                    before - reference.iter().map(|b| b.count_ones()).sum::<u32>()
+                );
+                assert_eq!(bucket.intersect_letter_union(pos, mask, &mut domain), 0);
             }
         }
     }
