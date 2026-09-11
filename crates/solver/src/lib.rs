@@ -12,6 +12,7 @@ mod state;
 mod stats;
 #[cfg(test)]
 mod test_utils;
+mod witnesses;
 
 pub use parallel::{
     solve_parallel, solve_parallel_with_progress, ParallelProgress, ParallelResult,

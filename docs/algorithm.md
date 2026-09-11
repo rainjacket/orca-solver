@@ -21,13 +21,18 @@ Orca processes slots in **priority queue order**, always propagating from the sl
 - **Bitset domains**: Each slot's candidate set is a bitset over word IDs, enabling fast AND-based filtering.
 - **Precomputed letter_bits**: For each (slot_length, position, letter), a bitset marks which words have that letter at that position. Filtering a domain to "words with letter L at position P" is a single bitwise AND.
 - **Incremental counting**: Domain sizes are maintained incrementally (tracking removed bits) rather than recomputed from scratch.
-- **Small-domain threshold**: For domains under 2000 words, letter counts are computed by direct iteration rather than bitset intersection, which is faster due to cache locality.
+- **Small-domain discovery**: With at most 512 candidates, discover viable letters at all crossing positions in one pass through surviving words. Larger domains use persistent masks and supporting-word witnesses.
+- **Persistent discovery caches**: Skip letters already ruled out; reuse a supporting word if it remains in the domain. Letter masks are restored with domain snapshots; witnesses are revalidated on every use. The separate last-applied-filter cache resets each propagation call.
+- **Grouped filter tables**: Once viable letters are known, combine at most six precomputed bitsets from five-letter alphabet groups to build the neighbor filter.
+- **Exact heuristic counts**: SoCDP still counts supporting words per letter, using direct iteration through 2,000 candidates and bitset intersection counts above that. This is separate from propagation's existence tests.
+
+See [Propagation and backtracking](propagation.md) for cache lifetimes, snapshot rules, memory costs and implementation details.
 
 ## Cell-level branching
 
 Traditional crossword solvers branch at the **slot level**: pick a slot, try each word. Orca instead branches at the **cell level**: pick a single cell at a crossing, try each viable letter. This decomposes each word choice into independent per-position letter choices, sharing propagation work across all words that agree at each position.
 
-With a naive minimum-remaining-values (MRV) heuristic, cell-level branching is actually *slower* than slot-level because it creates more nodes. The advantage only materializes with a crossing-aware heuristic:
+In the MRV benchmark comparison, cell-level branching took longer than slot-level branching despite fewer backtracks: cheaper decisions do not necessarily make the whole search cheaper. Orca uses a crossing-aware heuristic to make cell-level search effective:
 
 ## Branch selection heuristic (SoCDP)
 
@@ -47,7 +52,7 @@ The static crossing sort can be biased per cell. If grid cells are tagged with s
 
 ## Iterative search
 
-The search uses an explicit stack rather than recursion, avoiding stack overflow on deep search trees. Cells with a single viable letter are never selected as branch points -- constraint propagation resolves them as a side effect of neighboring assignments -- so stack frames and trail entries are only created where the search genuinely branches.
+The search uses an explicit stack rather than recursion, avoiding stack overflow on deep search trees. Forced single-letter moves are applied inline, sharing the enclosing decision's trail. Before the first candidate change to a slot at a decision level, its domain and letter masks are saved together; later changes at that level reuse that snapshot. Backtracking restores the saved domains.
 
 ## Duplicate and substring constraints
 
