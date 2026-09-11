@@ -1,5 +1,8 @@
 # Persistent propagation caches: production verification
 
+This report predates removal of the subset precheck. See
+[subset-precheck validation](subset-precheck.md) for that follow-up.
+
 September 10, 2026. Normal release builds with native CPU optimization, thin LTO
 and one codegen unit on Apple M5. No experimental features, instrumentation,
 runtime policy selection or custom search-budget hooks. Both repositories use

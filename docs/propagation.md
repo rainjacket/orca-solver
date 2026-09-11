@@ -28,9 +28,10 @@ they do not replace the exact counts needed by the branching heuristic.
 
 For the neighbor, build the OR of the viable-letter indexes using the existing
 [five-letter subset tables](five-letter-filters.md), then AND with its domain.
-Skip all-26-letter filters, unchanged filters within the same propagation call,
-and intersections that would remove no candidates. Update counts from removed
-bits and enqueue each changed neighbor. Filter construction has no 512 cutoff.
+Skip all-26-letter filters and unchanged filters within the same propagation
+call. Otherwise save the domain, apply the intersection and count removed bits
+in one pass. If none were removed, skip the statistics update and enqueueing.
+There is no separate subset precheck. Filter construction has no 512 cutoff.
 
 ## Three kinds of cached information
 
@@ -53,10 +54,10 @@ and dictionary; new searches initialize it, while state clones copy it.
 ## Snapshot semantics
 
 `push_level` records a trail boundary; it does not clone all domains. Before the
-first candidate mutation of a slot at that decision level, `save_domain` clones
-its complete domain (candidate bitset, cached count and letter masks). Later
-mutations of that slot at the same level do not add another snapshot. `pop_level`
-restores all saved domains. Forced moves share their enclosing decision's trail.
+first candidate update attempt for a slot at that decision level, `save_domain`
+clones its complete domain (candidate bitset, cached count and letter masks). A no-op
+intersection may therefore save a domain too. Later updates of that slot at the
+same level do not add another snapshot. `pop_level` restores all saved domains. Forced moves share their enclosing decision's trail.
 
 Refining a letter mask alone requires no new snapshot. If the slot's candidates
 changed at this level, the pre-change snapshot already preserves its parent

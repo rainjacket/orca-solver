@@ -202,24 +202,9 @@ fn propagate_inner(
             let filter = &mut filter_scratch[..num_blocks];
             neighbor_bucket.letter_union(pos_in_neighbor, possible_letters, filter);
 
-            // Quick check: would intersection change the domain?
-            // If domain is already a subset of filter, the intersection is a no-op.
-            let domain_blocks = state.domains[neighbor_id].candidates.blocks();
-            let mut would_change = false;
-            for (&d, &f) in domain_blocks.iter().zip(filter.iter()) {
-                if d & !f != 0 {
-                    would_change = true;
-                    break;
-                }
-            }
-
-            if !would_change {
-                continue;
-            }
-
-            // Domain will change - save before modifying
+            // Preserve the original domain before writing; save_domain deduplicates
+            // saves at this decision level, including unchanged intersections.
             state.save_domain(neighbor_id);
-            state.stats.propagations += 1;
 
             // Apply intersection with incremental count (branchless for SIMD vectorization)
             let old_count = state.domains[neighbor_id].count;
@@ -229,6 +214,10 @@ fn propagate_inner(
                 count_removed += (*d & !f).count_ones();
                 *d &= f;
             }
+            if count_removed == 0 {
+                continue;
+            }
+            state.stats.propagations += 1;
             let new_count = old_count - count_removed;
             state.domains[neighbor_id].count = new_count;
 
